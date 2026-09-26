@@ -1,1 +1,31 @@
-name: build\n\non:\n  push:\n    branches:\n      - main\n      - adb-shell-bridge\n  pull_request:\n\njobs:\n  android:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - uses: android-actions/setup-android@v3\n\n      - name: Install NDK\n        run: sdkmanager "ndk;27.2.12479018"\n\n      - name: Build ARM binaries\n        env:\n          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018\n        run: |\n          chmod +x scripts/build_android.sh\n          scripts/build_android.sh all\n\n      - uses: actions/upload-artifact@v4\n        with:\n          name: crawlspace-android\n          path: build/*/crawlspace\n
+name: build
+
+on:
+  push:
+    branches:
+      - main
+      - adb-shell-bridge
+  pull_request:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - name: Build ARM binaries
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+        run: |
+          chmod +x scripts/build_android.sh
+          scripts/build_android.sh all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crawlspace-android
+          path: build/*/crawlspace
