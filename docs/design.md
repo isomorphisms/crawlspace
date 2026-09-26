@@ -1,0 +1,54 @@
+# Design
+
+Crawl Space is an entrance below Android application privilege, not the final operating-system design.
+
+## First boundary
+
+The first implementation has two processes:
+
+1. a normal client in Termux;
+2. a small native daemon started by ADB as Android `shell` (`uid=2000`).
+
+They communicate over loopback TCP. A random token kept in the Termux private directory authenticates requests. The daemon accepts only absolute executable paths and returns combined stdout/stderr plus the remote exit status.
+
+The daemon deliberately refuses to start as an ordinary application uid. It accepts `shell` now and `root` later.
+
+## Why keep this when Crawl Space grows
+
+The command interface stays useful while the mechanism underneath it changes:
+
+```text
+today:     Termux -> crawlspace -> ADB-started shell process
+later:     Termux -> crawlspace -> root process
+later yet: programs -> crawlspace -> boot-integrated privileged service
+```
+
+Kernel/filesystem work such as TTL storage, append semantics, reclaim policy, or storage placement is separate. Crawl Space can install, inspect, test, and exercise those primitives without requiring every experiment to become an Android app.
+
+## First acceptance
+
+After self-ADB bootstrap:
+
+```sh
+crawlspace run /system/bin/id
+```
+
+must report `uid=2000(shell)`.
+
+Then an already staged system-side tool can be reached through the same entrance:
+
+```sh
+crawlspace run /data/local/tmp/tmovvm voicemail list
+```
+
+That is the useful first milestone: ordinary Termux initiates an operation that actually executes under Android `shell`, without keeping an interactive ADB shell open.
+
+## Known limitations of this first cut
+
+- ADB is still required to start the daemon after reboot.
+- The protocol is non-interactive.
+- stdout and stderr are combined.
+- A holder of the token can request any absolute executable path available to the daemon identity.
+- This does not bypass SELinux; it exposes exactly what the daemon identity can do.
+
+Those limitations are intentional. They make the shell boundary measurable before root or OS integration replaces the bootstrap.
