@@ -28,13 +28,13 @@ With an Android NDK installed:
 
 ```sh
 export ANDROID_NDK_HOME=/path/to/android-ndk
-scripts/build_android.sh armeabi-v7a
+sh scripts/build_android.sh armeabi-v7a
 ```
 
 or build both ARM targets:
 
 ```sh
-scripts/build_android.sh all
+sh scripts/build_android.sh all
 ```
 
 GitHub Actions also builds `armeabi-v7a` and `arm64-v8a` binaries.
@@ -44,7 +44,7 @@ GitHub Actions also builds `armeabi-v7a` and `arm64-v8a` binaries.
 The initial bootstrap assumes `adb` in Termux is paired/connected to the same phone through Android Wireless debugging.
 
 ```sh
-scripts/bootstrap_self_adb.sh
+sh scripts/bootstrap_self_adb.sh
 ```
 
 The script creates a random token in Termux private storage, pushes the daemon and token into `/data/local/tmp/crawlspace`, starts the daemon from ADB shell, installs the client in Termux, and runs the first acceptance check.
