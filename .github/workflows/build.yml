@@ -14,7 +14,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Test native protocol
-        run: make test
+        # The production daemon deliberately refuses ordinary application UIDs.
+        # Root is the host-test analogue of the accepted Android root/shell IDs.
+        run: sudo make test
 
   android:
     runs-on: ubuntu-latest
