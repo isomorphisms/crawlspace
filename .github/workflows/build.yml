@@ -5,13 +5,17 @@ on:
     branches:
       - main
       - adb-shell-bridge
+      - capability-discovery-v1
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   host:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Test native protocol
         # The production daemon deliberately refuses ordinary application UIDs.
@@ -21,7 +25,7 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install NDK
         run: |
@@ -32,7 +36,37 @@ jobs:
           ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" \
             sh scripts/build_android.sh all
 
-      - uses: actions/upload-artifact@v4
+      - name: Stage immutable Android assets
+        run: |
+          mkdir -p dist
+          cp build/armeabi-v7a/crawlspace dist/crawlspace-armeabi-v7a
+          cp build/arm64-v8a/crawlspace dist/crawlspace-arm64-v8a
+          sha256sum dist/crawlspace-armeabi-v7a dist/crawlspace-arm64-v8a > dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: crawlspace-android
-          path: build/*/crawlspace
+          path: |
+            build/*/crawlspace
+            dist/*
+
+      - name: Publish exact-commit Cat Food assets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/capability-discovery-v1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="catfood-$GITHUB_SHA"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Crawl Space $GITHUB_SHA" \
+              --notes "Exact-commit Android runtime assets for Cat Food. Build and physical-device evidence remain separate." \
+              --prerelease
+          fi
+          gh release upload "$tag" \
+            dist/crawlspace-armeabi-v7a \
+            dist/crawlspace-arm64-v8a \
+            dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
