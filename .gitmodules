@@ -1,0 +1,4 @@
+[submodule "shizuku"]
+	path = shizuku
+	url = https://github.com/RikkaApps/Shizuku.git
+	branch = master
