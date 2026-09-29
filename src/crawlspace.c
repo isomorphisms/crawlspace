@@ -857,6 +857,7 @@ static int run_client(int argument_count, char **arguments) {
 static void usage(void) {
     fprintf(stderr,
             "usage:\n"
+            "  crawlspace --version\n"
             "  crawlspace serve TOKEN_FILE [PORT]\n"
             "  crawlspace discover [EXPECTED_DAEMON_ID]\n"
             "  crawlspace run /absolute/command [ARG ...]\n");
@@ -864,6 +865,11 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
+
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("crawlspace transport=2 discovery=1\n");
+        return 0;
+    }
 
     if (argc >= 3 && strcmp(argv[1], "serve") == 0) {
         int port = DEFAULT_PORT;
