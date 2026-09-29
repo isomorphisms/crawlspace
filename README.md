@@ -55,6 +55,37 @@ Successful acceptance includes:
 uid=2000(shell)
 ```
 
+## Discover the current boundary
+
+The discovery request is separate from command execution:
+
+```sh
+crawlspace discover
+```
+
+It returns a bounded, line-oriented record such as:
+
+```text
+status=ready
+transport_version=2
+discovery_version=1
+daemon_identity=0123456789abcdef0123456789abcdef
+daemon_uid=2000
+authorization_scope=local-bearer-token
+capability=crawlspace.discovery.v1
+capability=crawlspace.run.absolute-path.v1
+```
+
+Pass the last observed identity to detect a daemon replacement:
+
+```sh
+crawlspace discover 0123456789abcdef0123456789abcdef
+```
+
+The response says `status=restarted` and supplies the new identity when a
+different daemon instance answers. The identity is a continuity marker, not a
+cryptographic identity or proof of the daemon executable.
+
 ## Use
 
 ```sh
@@ -65,4 +96,6 @@ crawlspace run /data/local/tmp/tmovvm voicemail list
 
 Commands must currently use an absolute executable path.
 
-See [`docs/design.md`](docs/design.md) for the boundary and intentional limitations of this first cut.
+See [`docs/design.md`](docs/design.md) for the boundary and
+[`docs/protocol.md`](docs/protocol.md) for the exact discovery, authentication,
+timeout, and restart contracts.

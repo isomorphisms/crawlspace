@@ -8,6 +8,14 @@ on:
   pull_request:
 
 jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test native protocol
+        run: make test
+
   android:
     runs-on: ubuntu-latest
     steps:
