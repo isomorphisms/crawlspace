@@ -20,6 +20,7 @@ $(HOST_TEST): tests/protocol_test.c | $(HOST_BUILD)
 
 test: $(HOST_BINARY) $(HOST_TEST)
 	$(HOST_TEST) $(HOST_BINARY)
+	$(HOST_BINARY) --version | grep -Fx 'crawlspace transport=2 discovery=1'
 
 clean:
 	rm -rf $(HOST_BUILD)
