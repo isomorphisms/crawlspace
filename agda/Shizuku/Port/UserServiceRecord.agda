@@ -99,11 +99,11 @@ callback-died-transition remaining r
 ... | false with nat-eq remaining 0
 ...   | false = transition r []
 ...   | true =
-      transition record (remove-self (UserServiceRecord.token r) ∷ [])
+      transition r (remove-self (UserServiceRecord.token r) ∷ [])
 
 service-died : UserServiceRecord → Transition
 service-died r =
-  transition record (remove-self (UserServiceRecord.token r) ∷ [])
+  transition r (remove-self (UserServiceRecord.token r) ∷ [])
 
 broadcast-died : UserServiceRecord → List RecordEffect
 broadcast-died r = died-effects (UserServiceRecord.callbacks r)
