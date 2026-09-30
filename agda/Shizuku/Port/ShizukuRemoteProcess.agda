@@ -13,7 +13,7 @@ StreamHandle : Set
 StreamHandle = Nat
 
 record State : Set where
-  constructor state
+  constructor process-state
   field
     remote        : Maybe RemoteHandle
     output-stream : Maybe StreamHandle
@@ -21,27 +21,25 @@ record State : Set where
     cached        : Bool
 
 new : RemoteHandle → State
-new remote = state (just remote) nothing nothing true
+new remote = process-process-state (just remote) nothing nothing true
 
 remote-died : State → State
 remote-died old =
-  state nothing
+  process-process-state nothing
     (State.output-stream old)
     (State.input-stream old)
     false
 
 cache-output-stream : StreamHandle → State → State
 cache-output-stream stream old =
-  state
-    (State.remote old)
+  process-process-state (State.remote old)
     (just stream)
     (State.input-stream old)
     (State.cached old)
 
 cache-input-stream : StreamHandle → State → State
 cache-input-stream stream old =
-  state
-    (State.remote old)
+  process-process-state (State.remote old)
     (State.output-stream old)
     (just stream)
     (State.cached old)
