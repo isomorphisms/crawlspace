@@ -1,0 +1,153 @@
+module CrawlSpace.ShizukuClients
+
+-- Type sketch of Shizuku client attachment and authorization.
+-- Source pins are the same as shizuku_protocol.idric.
+
+data Binder
+data ApplicationCallback
+
+record AndroidUid where
+    constructor Uid
+    number : Number
+
+record AndroidPid where
+    constructor Pid
+    number : Number
+
+record ApiVersion where
+    constructor Api
+    number : Number
+
+record PackageName where
+    constructor Package
+    text : Text
+
+record ClientKey where
+    constructor ProcessKey
+    uid : AndroidUid
+    pid : AndroidPid
+
+record BinderCaller where
+    constructor CallingProcess
+    key : ClientKey
+
+data PackageBelongsTo : PackageName → AndroidUid → Type where
+    ConfirmedPackageOwner : PackageBelongsTo package uid
+
+record VerifiedPackage where
+    constructor Verified
+    package : PackageName
+    caller : BinderCaller
+    ownership : PackageBelongsTo package caller.key.uid
+
+data ClientPermission
+    = PermissionDenied
+    | PermissionGranted
+
+record Client where
+    constructor AttachedClient
+    key : ClientKey
+    package : VerifiedPackage
+    callback : ApplicationCallback
+    api_version : ApiVersion
+    permission : ClientPermission
+
+data ClientLife
+    = ClientAlive
+    | ClientDead
+
+record ClientRecord (life : ClientLife) where
+    constructor RegisteredClient
+    client : Client
+
+data AttachError
+    = PackageDoesNotBelongToCaller
+    | CallbackAlreadyDead
+    | RegistrationFailed
+
+data AuthorizationReason
+    = SameServerUid
+    | ManagerPackage
+    | RuntimeApiPermission
+    | AttachedClientPermission
+
+record AuthorizedCaller where
+    constructor Authorized
+    caller : BinderCaller
+    reason : AuthorizationReason
+
+-- Package ownership is checked using PackageManager packages-for-uid.
+verify package for caller
+    : BinderCaller
+    → PackageName
+    → IO (Either AttachError VerifiedPackage)
+
+-- Registration links the application callback Binder to death before the record
+-- becomes visible. If linkToDeath fails, no client record is retained.
+register client
+    : VerifiedPackage
+    → ApplicationCallback
+    → ApiVersion
+    → IO (Either AttachError (ClientRecord ClientAlive))
+
+remove client when callback dies
+    : ClientRecord ClientAlive
+    → ClientRecord ClientDead
+
+find client
+    : ClientKey
+    → IO (Maybe (ClientRecord ClientAlive))
+
+find clients for uid
+    : AndroidUid
+    → IO (List (ClientRecord ClientAlive))
+
+set client permission
+    : ClientPermission
+    → ClientRecord ClientAlive
+    → IO (ClientRecord ClientAlive)
+
+-- This mirrors the effective Shizuku permission order:
+--
+--   1. calls originating from the server uid;
+--   2. manager package calls;
+--   3. callers with the runtime Shizuku API permission even before attachment;
+--   4. an attached client whose record is marked allowed.
+--
+-- The result keeps the reason rather than projecting the decision immediately
+-- to Bool; downstream operations can therefore distinguish trust paths.
+authorize caller
+    : BinderCaller
+    → IO (Maybe AuthorizedCaller)
+
+-- Attaching is deliberately two-stage. The request package name is untrusted
+-- until it is shown to belong to Binder.getCallingUid().
+attach application
+    : BinderCaller
+    → PackageName
+    → ApplicationCallback
+    → ApiVersion
+    → IO (Either AttachError (ClientRecord ClientAlive))
+
+attach application caller requested_package callback api ≝
+    verified ← verify package for caller caller requested_package
+    register client verified callback api
+
+-- Android lowering:
+--
+-- verify package for caller
+--     PackageManagerApis.getPackagesForUidNoThrow(caller.uid)
+--
+-- register client
+--     callback.asBinder().linkToDeath(...)
+--     add record only after successful linkToDeath
+--
+-- remove client when callback dies
+--     death recipient removes exactly the (uid,pid) record
+--
+-- authorize caller
+--     Binder.getCallingUid / getCallingPid
+--     compare server uid
+--     manager app-id check
+--     ActivityManager/PermissionManager permission check
+--     attached ClientRecord.allowed
