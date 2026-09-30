@@ -14,14 +14,14 @@ tls-pairing-service : String
 tls-pairing-service = "_adb-tls-pairing._tcp"
 
 record State : Set where
-  constructor state
+  constructor mdns-state
   field
     registered   : Bool
     running      : Bool
     service-name : Maybe String
 
 initial : State
-initial = state false false nothing
+initial = mdns-mdns-state false false nothing
 
 data Effect : Set where
   discover-services : String → Effect
@@ -41,11 +41,11 @@ start service-type old with State.running old
 ... | false with State.registered old
 ...   | true =
       transition
-        (state true true (State.service-name old))
+        (mdns-mdns-state true true (State.service-name old))
         nothing
 ...   | false =
       transition
-        (state false true (State.service-name old))
+        (mdns-mdns-state false true (State.service-name old))
         (just (discover-services service-type))
 
 stop : State → Transition
@@ -54,20 +54,20 @@ stop old with State.running old
 ... | true with State.registered old
 ...   | false =
       transition
-        (state false false (State.service-name old))
+        (mdns-mdns-state false false (State.service-name old))
         nothing
 ...   | true =
       transition
-        (state true false (State.service-name old))
+        (mdns-mdns-state true false (State.service-name old))
         (just stop-discovery)
 
 discovery-started : State → State
 discovery-started old =
-  state true (State.running old) (State.service-name old)
+  mdns-mdns-state true (State.running old) (State.service-name old)
 
 discovery-stopped : State → State
 discovery-stopped old =
-  state false (State.running old) (State.service-name old)
+  mdns-mdns-state false (State.running old) (State.service-name old)
 
 service-found : String → Effect
 service-found name = resolve-service name
@@ -87,8 +87,7 @@ service-resolved facts old
      | ResolutionFacts.port-in-use facts
 ... | true | true | true =
   transition
-    (state
-      (State.registered old)
+    (mdns-mdns-state (State.registered old)
       true
       (just (ResolutionFacts.name facts)))
     (just (report-port (ResolutionFacts.port facts)))
