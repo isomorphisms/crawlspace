@@ -1,0 +1,210 @@
+module CrawlSpace.ShizukuUserService
+
+-- Type sketch of Shizuku user-service management.
+-- This separates semantic service state from version-dependent integer replies.
+
+data Binder
+
+record AndroidUid where
+    constructor Uid
+    number : Number
+
+record AndroidAppId where
+    constructor AppId
+    number : Number
+
+record AndroidUser where
+    constructor User
+    number : Number
+
+record ApiVersion where
+    constructor Api
+    number : Number
+
+record PackageName where
+    constructor Package
+    text : Text
+
+record ClassName where
+    constructor Class
+    text : Text
+
+record ServiceTag where
+    constructor Tag
+    text : Text
+
+record ServiceVersion where
+    constructor Version
+    number : Number
+
+record ApkPath where
+    constructor Apk
+    text : Text
+
+record ServiceToken where
+    constructor Token
+    text : Text
+
+data ProcessWidth
+    = NativeWidth
+    | Force32Bit
+
+data ServiceLife
+    = Missing
+    | Starting
+    | Running
+    | Dead
+
+record ServiceKey where
+    constructor Key
+    package : PackageName
+    identity : Text
+
+record VerifiedServicePackage where
+    constructor VerifiedPackage
+    package : PackageName
+    caller_app_id : AndroidAppId
+    user : AndroidUser
+    apk : ApkPath
+
+record UserServiceSpec where
+    constructor UserService
+    package : VerifiedServicePackage
+    class_name : ClassName
+    tag : Maybe ServiceTag
+    version : ServiceVersion
+    process_suffix : Maybe Text
+    daemon : Bool
+    width : ProcessWidth
+    debug : Bool
+
+record ServiceRecord (life : ServiceLife) where
+    constructor Service
+    key : ServiceKey
+    token : ServiceToken
+    spec : UserServiceSpec
+    binder : Maybe Binder
+
+data CreatePolicy
+    = CreateIfMissing
+    | ExistingOnly
+
+data RemovePolicy
+    = DestroyService
+    | DetachOnly
+
+data BindResult
+    = ExistingService ServiceVersion Binder
+    | StartingService
+    | ServiceNotFound
+
+data UserServiceError
+    = PackageNotFound
+    | PackageNotOwnedByCaller
+    | ClassMissing
+    | StartFailed
+    | AttachTokenUnknown
+    | AttachedBinderDead
+
+-- Caller package verification compares app-id, not merely package spelling.
+verify package for user service
+    : PackageName
+    → AndroidAppId
+    → AndroidUser
+    → IO (Either UserServiceError VerifiedServicePackage)
+
+service key for
+    : PackageName
+    → ClassName
+    → Maybe ServiceTag
+    → ServiceKey
+
+-- Existing records are reused only when version matches and the service is
+-- either still starting or has a live Binder. Otherwise the old record is
+-- destroyed before replacement.
+select service record
+    : UserServiceSpec
+    → IO (ServiceRecord Missing)
+
+bind user service
+    : ApiVersion
+    → CreatePolicy
+    → UserServiceSpec
+    → IO (Either UserServiceError BindResult)
+
+remove user service
+    : RemovePolicy
+    → ServiceKey
+    → IO ()
+
+attach started user service
+    : ServiceToken
+    → Binder
+    → IO (Either UserServiceError (ServiceRecord Running))
+
+data AppProcess where
+    AppProcess : Text → AppProcess
+
+select app_process
+    : ProcessWidth
+    → IO AppProcess
+
+record StartCommand where
+    constructor Start
+    app_process : AppProcess
+    manager_apk : ApkPath
+    token : ServiceToken
+    package : PackageName
+    class_name : ClassName
+    calling_uid : AndroidUid
+    process_suffix : Maybe Text
+    debug : Bool
+
+start user service process
+    : StartCommand
+    → IO (Either UserServiceError (ServiceRecord Starting))
+
+-- Shizuku's semantic outcomes are encoded differently for older callers.
+-- Keep that compatibility at the wire edge instead of infecting service logic.
+encode bind result for api
+    : ApiVersion
+    → BindResult
+    → Number
+
+-- Intended compatibility mapping:
+--
+-- API >= 13:
+--   ExistingService version _  ⇒ version
+--   ServiceNotFound            ⇒ −1
+--   StartingService            ⇒ 0
+--
+-- API < 13:
+--   ExistingService _ _        ⇒ 0
+--   ServiceNotFound            ⇒ 1
+--   StartingService            ⇒ 0
+--
+-- Android lowering:
+--
+-- verify package for user service
+--     PackageManagerApis.getPackageInfoNoThrow
+--     UserHandleCompat.getAppId(package.uid) ≟ caller_app_id
+--
+-- select app_process
+--     /system/bin/app_process
+--     /system/bin/app_process32 when explicitly requested and available
+--
+-- start user service process
+--     CLASSPATH=<manager apk> app_process /system/bin
+--       moe.shizuku.starter.ServiceStarter
+--       --token ...
+--       --package ...
+--       --class ...
+--       --uid ...
+--
+-- attach started user service
+--     lookup record by unguessable token
+--     record.setBinder(binder)
+--     binder death transitions Running → Dead / removal according to daemon policy
+--
+-- A future executable Idriç version should build argv/environment structurally,
+-- not concatenate a shell command string.
