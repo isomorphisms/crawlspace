@@ -1,0 +1,23 @@
+name: Agda typecheck
+
+on:
+  push:
+    branches:
+      - Agda
+  pull_request:
+    paths:
+      - 'agda/**'
+      - 'scripts/check_agda.sh'
+      - '.github/workflows/agda.yml'
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Agda
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y agda-bin
+      - name: Typecheck
+        run: sh scripts/check_agda.sh
