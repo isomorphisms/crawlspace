@@ -34,7 +34,7 @@ record WireMessage : Set where
     data-length        : Nat
     data-checksum      : Nat
     magic              : Nat
-    data               : List Byte
+    payload-bytes      : List Byte
 
 decode-command : Nat → Maybe Command
 decode-command n with nat-eq n (command-code sync)
@@ -61,9 +61,9 @@ validate message with decode-command (WireMessage.command-code-field message)
 ... | just command =
   nat-eq (WireMessage.magic message) (command-magic command)
   &&
-  nat-eq (WireMessage.data-length message) (length (WireMessage.data message))
+  nat-eq (WireMessage.data-length message) (length (WireMessage.payload-bytes message))
   &&
-  nat-eq (WireMessage.data-checksum message) (checksum (WireMessage.data message))
+  nat-eq (WireMessage.data-checksum message) (checksum (WireMessage.payload-bytes message))
 
 header-length : Nat
 header-length = 24
