@@ -122,16 +122,16 @@ data ConfirmationDecision : Set where
   start-confirmation      : Nat → ConfirmationDecision
 
 confirmation-decision : ConfirmationFacts → ConfirmationDecision
-confirmation-decision facts with ConfirmationFacts.application-info-present facts
-... | false = no-confirmation
-... | true with ConfirmationFacts.manager-present facts
-...   | true with ConfirmationFacts.work-profile facts
-...     | true = start-confirmation 0
-...     | false =
-        start-confirmation (ConfirmationFacts.requested-user-id facts)
-...   | false with ConfirmationFacts.work-profile facts
-...     | true = start-confirmation 0
-...     | false = reject-permission
+confirmation-decision facts
+  with ConfirmationFacts.application-info-present facts
+     | ConfirmationFacts.manager-present facts
+     | ConfirmationFacts.work-profile facts
+... | false | _ | _ = no-confirmation
+... | true | true | true = start-confirmation 0
+... | true | true | false =
+  start-confirmation (ConfirmationFacts.requested-user-id facts)
+... | true | false | true = start-confirmation 0
+... | true | false | false = reject-permission
 
 set-uid-allowed : Nat → Bool → List ClientRecord → List ClientRecord
 set-uid-allowed uid allowed [] = []
@@ -184,6 +184,41 @@ grant-effects user-id (package-name ∷ rest) =
   grant-api-runtime-permission package-name user-id ∷
   grant-effects user-id rest
 
+permission-flags-for : Bool → PermissionFlags
+permission-flags-for true = permission-flags true false
+permission-flags-for false = permission-flags false true
+
+append-effects :
+  List PermissionEffect → List PermissionEffect → List PermissionEffect
+append-effects [] ys = ys
+append-effects (x ∷ xs) ys = x ∷ append-effects xs ys
+
+persist-config-if-needed :
+  Nat →
+  List String →
+  Bool →
+  Bool →
+  List PackageEntry →
+  List PackageEntry
+persist-config-if-needed uid packages allowed true config = config
+persist-config-if-needed uid packages allowed false config =
+  update uid packages permission-mask-all (permission-flags-for allowed) config
+
+persistent-effects :
+  Nat →
+  Nat →
+  List String →
+  List String →
+  Bool →
+  Bool →
+  List PermissionEffect
+persistent-effects uid user-id packages installed allowed true = []
+persistent-effects uid user-id packages installed false false =
+  persist-config uid packages (permission-flags-for false) ∷ []
+persistent-effects uid user-id packages installed true false =
+  persist-config uid packages (permission-flags-for true) ∷
+  grant-effects user-id installed
+
 dispatch-permission-result :
   Nat →
   Nat →
@@ -197,38 +232,16 @@ dispatch-permission-result :
   PermissionTransition
 dispatch-permission-result
   uid pid request-code user-id allowed one-time installed-api-packages clients config =
-  permission-transition new-clients new-config
-    (notify-target uid pid request-code allowed clients ++ persistence-effects)
+  permission-transition
+    (set-uid-allowed uid allowed clients)
+    (persist-config-if-needed uid package-names allowed one-time config)
+    (append-effects
+      (notify-target uid pid request-code allowed clients)
+      (persistent-effects
+        uid user-id package-names installed-api-packages allowed one-time))
   where
-  new-clients : List ClientRecord
-  new-clients = set-uid-allowed uid allowed clients
-
-  value : PermissionFlags
-  value with allowed
-  ... | true = permission-flags true false
-  ... | false = permission-flags false true
-
   package-names : List String
   package-names = packages-for-uid uid clients
-
-  new-config : List PackageEntry
-  new-config with one-time
-  ... | true = config
-  ... | false =
-      update uid package-names permission-mask-all value config
-
-  persistence-effects : List PermissionEffect
-  persistence-effects with one-time
-  ... | true = []
-  ... | false with allowed
-  ...   | false = persist-config uid package-names value ∷ []
-  ...   | true =
-      persist-config uid package-names value ∷
-      grant-effects user-id installed-api-packages
-
-  _++_ : List PermissionEffect → List PermissionEffect → List PermissionEffect
-  [] ++ ys = ys
-  (x ∷ xs) ++ ys = x ∷ (xs ++ ys)
 
 revocation-effects : Nat → List ClientRecord → List PermissionEffect
 revocation-effects uid [] = []
