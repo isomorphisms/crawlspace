@@ -22,7 +22,7 @@ record ManagedService : Set where
   constructor managed-service
   field
     key    : ServiceKey
-    record : UserServiceRecord
+    service-record : UserServiceRecord
 
 same-key : ServiceKey → ServiceKey → Bool
 same-key a b =
@@ -62,7 +62,7 @@ peek-result api-version (just service) service-alive
 ... | true with 13 ≤ᵇ api-version
 ...   | true =
       v13-found
-        (UserServiceRecord.version-code (ManagedService.record service))
+        (UserServiceRecord.version-code (ManagedService.service-record service))
 ...   | false = legacy-found
 
 record StartRequest : Set where
@@ -115,6 +115,6 @@ should-reuse :
   Nat → ManagedService → ExistingStatus → Bool
 should-reuse requested-version service status =
   nat-eq requested-version
-    (UserServiceRecord.version-code (ManagedService.record service))
+    (UserServiceRecord.version-code (ManagedService.service-record service))
   &&
   (ExistingStatus.starting status || ExistingStatus.binder-alive status)
