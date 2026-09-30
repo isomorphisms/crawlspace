@@ -9,15 +9,15 @@ Handler : Set
 Handler = Nat
 
 record State : Set where
-  constructor state
+  constructor handler-state
   field
     main-handler : Maybe Handler
 
 initial : State
-initial = state nothing
+initial = handler-handler-state nothing
 
 set-main-handler : Handler → State
-set-main-handler handler = state (just handler)
+set-main-handler handler = handler-handler-state (just handler)
 
 get-main-handler : State → Maybe Handler
 get-main-handler = State.main-handler
