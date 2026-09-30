@@ -44,28 +44,28 @@ record Transition : Set where
     effects : List RecordEffect
 
 set-starting-timeout : Nat → UserServiceRecord → Transition
-set-starting-timeout timeout record with UserServiceRecord.starting record
-... | true = transition record []
+set-starting-timeout timeout r with UserServiceRecord.starting r
+... | true = transition r []
 ... | false =
   transition
     (user-service-record
-      (UserServiceRecord.version-code record)
-      (UserServiceRecord.token record)
-      (UserServiceRecord.service record)
-      (UserServiceRecord.callbacks record)
-      (UserServiceRecord.daemon record)
+      (UserServiceRecord.version-code r)
+      (UserServiceRecord.token r)
+      (UserServiceRecord.service r)
+      (UserServiceRecord.callbacks r)
+      (UserServiceRecord.daemon r)
       true)
-    (schedule-start-timeout (UserServiceRecord.token record) timeout ∷ [])
+    (schedule-start-timeout (UserServiceRecord.token r) timeout ∷ [])
 
 set-daemon : Bool → UserServiceRecord → UserServiceRecord
-set-daemon daemon record =
+set-daemon daemon r =
   user-service-record
-    (UserServiceRecord.version-code record)
-    (UserServiceRecord.token record)
-    (UserServiceRecord.service record)
-    (UserServiceRecord.callbacks record)
+    (UserServiceRecord.version-code r)
+    (UserServiceRecord.token r)
+    (UserServiceRecord.service r)
+    (UserServiceRecord.callbacks r)
     daemon
-    (UserServiceRecord.starting record)
+    (UserServiceRecord.starting r)
 
 connected-effects :
   BinderHandle → List ConnectionHandle → List RecordEffect
@@ -79,40 +79,40 @@ died-effects (connection ∷ rest) =
   callback-died connection ∷ died-effects rest
 
 set-binder : BinderHandle → UserServiceRecord → Transition
-set-binder binder record =
+set-binder binder r =
   transition
     (user-service-record
-      (UserServiceRecord.version-code record)
-      (UserServiceRecord.token record)
+      (UserServiceRecord.version-code r)
+      (UserServiceRecord.token r)
       (just binder)
-      (UserServiceRecord.callbacks record)
-      (UserServiceRecord.daemon record)
+      (UserServiceRecord.callbacks r)
+      (UserServiceRecord.daemon r)
       false)
-    (cancel-start-timeout (UserServiceRecord.token record) ∷
-     link-service-death binder (UserServiceRecord.token record) ∷
-     connected-effects binder (UserServiceRecord.callbacks record))
+    (cancel-start-timeout (UserServiceRecord.token r) ∷
+     link-service-death binder (UserServiceRecord.token r) ∷
+     connected-effects binder (UserServiceRecord.callbacks r))
 
 callback-died-transition : Nat → UserServiceRecord → Transition
-callback-died-transition remaining record
-  with UserServiceRecord.daemon record
-... | true = transition record []
+callback-died-transition remaining r
+  with UserServiceRecord.daemon r
+... | true = transition r []
 ... | false with nat-eq remaining 0
-...   | false = transition record []
+...   | false = transition r []
 ...   | true =
-      transition record (remove-self (UserServiceRecord.token record) ∷ [])
+      transition record (remove-self (UserServiceRecord.token r) ∷ [])
 
 service-died : UserServiceRecord → Transition
-service-died record =
-  transition record (remove-self (UserServiceRecord.token record) ∷ [])
+service-died r =
+  transition record (remove-self (UserServiceRecord.token r) ∷ [])
 
 broadcast-died : UserServiceRecord → List RecordEffect
-broadcast-died record = died-effects (UserServiceRecord.callbacks record)
+broadcast-died r = died-effects (UserServiceRecord.callbacks r)
 
 destroy-effects : UserServiceRecord → List RecordEffect
-destroy-effects record with UserServiceRecord.service record
+destroy-effects r with UserServiceRecord.service r
 ... | nothing =
-  kill-callbacks (UserServiceRecord.token record) ∷ []
+  kill-callbacks (UserServiceRecord.token r) ∷ []
 ... | just binder =
-  unlink-service-death binder (UserServiceRecord.token record) ∷
+  unlink-service-death binder (UserServiceRecord.token r) ∷
   transact-destroy binder ∷
-  kill-callbacks (UserServiceRecord.token record) ∷ []
+  kill-callbacks (UserServiceRecord.token r) ∷ []
