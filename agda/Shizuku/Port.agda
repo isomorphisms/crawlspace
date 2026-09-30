@@ -17,3 +17,6 @@ import Shizuku.Port.BinderWrapper
 import Shizuku.Port.ServiceConnection
 import Shizuku.Port.SystemServiceHelper
 import Shizuku.Port.AIDL
+import Shizuku.Port.ShizukuService
+import Shizuku.Port.ShizukuConfigManager
+import Shizuku.Port.ClientApi
