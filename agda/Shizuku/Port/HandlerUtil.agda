@@ -14,10 +14,10 @@ record State : Set where
     main-handler : Maybe Handler
 
 initial : State
-initial = handler-handler-state nothing
+initial = handler-state nothing
 
 set-main-handler : Handler → State
-set-main-handler handler = handler-handler-state (just handler)
+set-main-handler handler = handler-state (just handler)
 
 get-main-handler : State → Maybe Handler
 get-main-handler = State.main-handler
