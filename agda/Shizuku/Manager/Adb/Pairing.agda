@@ -3,7 +3,7 @@
 module Shizuku.Manager.Adb.Pairing where
 
 open import Agda.Builtin.Bool using (Bool; true; false)
-open import Agda.Builtin.List using (List)
+open import Agda.Builtin.List using (List; []; _∷_)
 open import Agda.Builtin.Maybe using (Maybe; nothing; just)
 open import Agda.Builtin.Nat using (Nat)
 open import Agda.Builtin.String using (String)
@@ -101,44 +101,44 @@ record Transition : Set where
 
 start-effects : List Effect
 start-effects =
-  open-tls13-connection Agda.Builtin.List.∷
-  export-tls-key-material exported-key-label exported-key-size Agda.Builtin.List.∷
-  create-spake2-context Agda.Builtin.List.∷
-  send-spake2-message Agda.Builtin.List.∷
-  Agda.Builtin.List.[]
+  open-tls13-connection ∷
+  export-tls-key-material exported-key-label exported-key-size ∷
+  create-spake2-context ∷
+  send-spake2-message ∷
+  []
 
 begin : Transition
 begin = transition exchanging-messages nothing start-effects
 
 spake2-reply : Header → Bool → Transition
 spake2-reply h cipher-initialized with valid-header h
-... | false = transition stopped (just bad-message-header) Agda.Builtin.List.[]
+... | false = transition stopped (just bad-message-header) []
 ... | true with Header.type h
 ...   | peer-info =
-      transition stopped (just wrong-message-type) Agda.Builtin.List.[]
+      transition stopped (just wrong-message-type) []
 ...   | spake2-message with cipher-initialized
 ...     | false =
-        transition stopped (just cipher-init-failed) Agda.Builtin.List.[]
+        transition stopped (just cipher-init-failed) []
 ...     | true =
         transition exchanging-peer-info nothing
-          (encrypt-peer-info Agda.Builtin.List.∷
-           send-peer-info Agda.Builtin.List.∷
-           decrypt-peer-info Agda.Builtin.List.∷
-           Agda.Builtin.List.[])
+          (encrypt-peer-info ∷
+           send-peer-info ∷
+           decrypt-peer-info ∷
+           [])
 
 peer-info-reply :
   Header → Bool → Nat → Transition
 peer-info-reply h decrypts decrypted-size with valid-header h
-... | false = transition stopped (just bad-message-header) Agda.Builtin.List.[]
+... | false = transition stopped (just bad-message-header) []
 ... | true with Header.type h
 ...   | spake2-message =
-      transition stopped (just wrong-message-type) Agda.Builtin.List.[]
+      transition stopped (just wrong-message-type) []
 ...   | peer-info with decrypts
 ...     | false =
-        transition stopped (just invalid-pairing-code) Agda.Builtin.List.[]
+        transition stopped (just invalid-pairing-code) []
 ...     | true with nat-eq decrypted-size max-peer-info-size
 ...       | false =
-          transition stopped (just wrong-peer-info-size) Agda.Builtin.List.[]
+          transition stopped (just wrong-peer-info-size) []
 ...       | true =
           transition stopped nothing
-            (destroy-pairing-context Agda.Builtin.List.∷ Agda.Builtin.List.[])
+            (destroy-pairing-context ∷ [])
