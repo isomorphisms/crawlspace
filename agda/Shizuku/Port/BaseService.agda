@@ -11,7 +11,7 @@ open import Shizuku.Port.ClientManager
 open import Shizuku.Port.ConfigManager
 
 record Caller : Set where
-  constructor caller
+  constructor mk-caller
   field
     uid : Nat
     pid : Nat
