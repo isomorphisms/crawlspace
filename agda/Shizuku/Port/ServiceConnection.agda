@@ -79,7 +79,7 @@ died state with ConnectionState.dead state
     (disconnected-effects
        (ConnectionState.component-name state)
        (ConnectionState.connections state)
-     ++ remove-from-cache ∷ [])
+     ++ (remove-from-cache ∷ []))
   where
   _++_ : List ConnectionEffect → List ConnectionEffect → List ConnectionEffect
   [] ++ ys = ys
