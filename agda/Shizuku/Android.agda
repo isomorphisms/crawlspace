@@ -7,7 +7,7 @@ open import Agda.Builtin.List using (List)
 open import Agda.Builtin.String using (String)
 
 open import Shizuku.Types
-open import Shizuku.Protocol
+import Shizuku.Protocol
 
 record AndroidOps : Set₁ where
   field
@@ -27,7 +27,7 @@ record AndroidOps : Set₁ where
       PermissionName → Pid → Uid → Bool
 
     wait-system-service : String → Action
-    spawn               : ProcessSpec → Process
+    spawn               : Shizuku.Protocol.ProcessSpec → Process
 
     deliver-binder :
       PackageName → Binder → Action
