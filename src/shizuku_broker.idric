@@ -1,0 +1,230 @@
+module CrawlSpace.ShizukuBroker
+
+-- Intent-level Idriç type sketch of the Shizuku mechanism.
+-- This records semantic boundaries before Android Binder / DEX lowering.
+-- Parser or backend acceptance is not claimed yet.
+
+data LaunchAuthority
+    = AdbShell
+    | Root
+
+data BrokerState
+    = Starting
+    | Ready
+    | Dead
+
+data BinderState
+    = BinderAlive
+    | BinderDead
+
+data ClientPermission
+    = PermissionUnknown
+    | PermissionDenied
+    | PermissionGranted
+
+data PermissionDecision
+    = Denied
+    | Granted
+
+record AndroidUid where
+    constructor Uid
+    number : Number
+
+record AndroidPid where
+    constructor Pid
+    number : Number
+
+record AndroidUser where
+    constructor User
+    number : Number
+
+record PackageName where
+    constructor Package
+    text : Text
+
+record AndroidPermission where
+    constructor Permission
+    text : Text
+
+record SelinuxContext where
+    constructor Context
+    text : Text
+
+record ApiVersion where
+    constructor Api
+    number : Number
+
+record TransactionCode where
+    constructor Transaction
+    number : Number
+
+record TransactionFlags where
+    constructor Flags
+    number : Number
+
+-- Raw Android boundary objects. Their representations belong below this file.
+data Binder
+data Parcel
+
+record ServerIdentity where
+    constructor ServerAs
+    authority : LaunchAuthority
+    uid : AndroidUid
+    selinux_context : SelinuxContext
+
+-- uid and pid come from Binder itself, not from fields supplied by the caller.
+record BinderCaller where
+    constructor CallingProcess
+    uid : AndroidUid
+    pid : AndroidPid
+
+-- Proof that the package named during attach really belongs to Binder's caller uid.
+data PackageBelongsTo : PackageName → AndroidUid → Type where
+    ConfirmedPackageOwner : PackageBelongsTo package uid
+
+record VerifiedCaller where
+    constructor Verified
+    caller : BinderCaller
+    package : PackageName
+    owns_package : PackageBelongsTo package caller.uid
+
+record ApplicationCallback where
+    constructor Application
+    binder : Binder
+
+record Client where
+    constructor AttachedClient
+    caller : VerifiedCaller
+    callback : ApplicationCallback
+    api_version : ApiVersion
+    permission : ClientPermission
+
+record AllowedClient where
+    constructor Allowed
+    client : Client
+
+record RemoteTransaction where
+    constructor Forward
+    target : Binder
+    code : TransactionCode
+    flags : TransactionFlags
+    request : Parcel
+
+record Broker (state : BrokerState) where
+    constructor BrokerService
+    identity : ServerIdentity
+    binder : Binder
+
+record UserServiceSpec where
+    constructor UserService
+    package : PackageName
+    class_name : Text
+    tag : Text
+    version : Number
+    daemon : Bool
+
+record UserServiceHandle where
+    constructor RunningUserService
+    binder : Binder
+    owner : VerifiedCaller
+    server_identity : ServerIdentity
+
+data AttachError
+    = PackageDoesNotBelongToCaller
+    | ClientRegistrationFailed
+    | BrokerNotReady
+
+data BrokerError
+    = ClientNotAllowed
+    | RemoteBinderDead
+    | RemoteTransactionFailed
+    | BrokerDied
+
+data UserServiceError
+    = InvalidUserServicePackage
+    | UserServiceStartFailed
+    | UserServiceAttachFailed
+
+data DeliveryError
+    = ClientProviderMissing
+    | ClientProviderDead
+    | BinderDeliveryFailed
+
+-- High-level server path.
+
+start broker using : LaunchAuthority → IO (Broker Ready)
+
+attach application to broker
+    : Broker Ready
+    → BinderCaller
+    → PackageName
+    → ApplicationCallback
+    → ApiVersion
+    → IO (Either AttachError Client)
+
+allow client
+    : Client
+    → Maybe AllowedClient
+
+check remote permission with broker
+    : Broker Ready
+    → AndroidPermission
+    → IO PermissionDecision
+
+forward transaction through broker for client
+    : Broker Ready
+    → AllowedClient
+    → RemoteTransaction
+    → IO (Either BrokerError Parcel)
+
+bind user_service through broker for client
+    : Broker Ready
+    → AllowedClient
+    → UserServiceSpec
+    → IO (Either UserServiceError UserServiceHandle)
+
+unbind user_service through broker
+    : Broker Ready
+    → AllowedClient
+    → UserServiceHandle
+    → Bool
+    → IO ()
+
+send broker binder to package
+    : Broker Ready
+    → PackageName
+    → AndroidUser
+    → IO (Either DeliveryError ())
+
+-- Binder death changes the client-visible state. Callers must reacquire the
+-- broker binder after restart rather than retaining a stale capability.
+broker died
+    : Broker Ready
+    → Broker Dead
+
+-- Intended top-level behavior:
+--
+-- broker ← start broker using AdbShell
+-- send broker binder to eligible packages
+--
+-- client calls a framework service through a wrapper:
+--   original system-service binder
+--       ↓
+--   RemoteTransaction
+--       ↓
+--   Crawl Space broker running as shell/root
+--       ↓
+--   original binder transact
+--
+-- system_server therefore sees the broker identity rather than the ordinary
+-- application uid for the forwarded transaction.
+--
+-- Android lowering still required:
+--   Binder.getCallingUid / getCallingPid
+--   ServiceManager.getService
+--   IBinder.transact and Parcel marshalling
+--   binder death recipients
+--   package-name ownership lookup
+--   ContentProvider binder delivery
+--   app_process startup
+--   user-service process launch and lifecycle
