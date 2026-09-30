@@ -207,3 +207,55 @@ They should share the same authority vocabulary and eventually the same startup
 policy, but neither needs to be disguised as the other. The command bridge
 remains useful for programs and tests; the Binder bridge supplies the Shizuku
 capability that ordinary Android apps need.
+
+
+## Generic Binder lowering home
+
+The reusable Binder mechanics do not belong in Crawl Space itself. They now have
+a dedicated working branch in `isomorphisms/android-NDK`:
+
+```text
+binder/idric-shizuku
+```
+
+That branch adds:
+
+- `binder/README.md` — the generic Binder/system-service boundary and
+  acceptance ladder;
+- `dex/idric/src/Backend/DEX/Framework.idr` — typed DEX class/method
+  references, invoke kinds, the opaque wide calling-identity token, and the
+  exact first-slice instruction requirements;
+- `dex/idric/tests/dex/FrameworkPlanTest.idr` — descriptor/type-plan checks.
+
+The existing DEX encoder already has a narrow external-call precedent for
+`String.equals`: it emits a method reference, `invoke-virtual`, and
+`move-result`. The Binder work should generalize that machinery rather than
+create a parallel encoder.
+
+The first faithful DEX slice adds three things that precedent does not supply:
+
+1. arbitrary typed external method references and static/interface invocation;
+2. an opaque two-register `long` result for
+   `Binder.clearCallingIdentity()`;
+3. catch-all cleanup with `move-exception`, identity restoration, and rethrow.
+
+The calling-identity token is target plumbing. It must not become a reason to
+change Idriç's ordinary numeric defaults or expose a general host `Long`
+through the application language.
+
+### Native NDK alternative
+
+A native Binder broker is also plausible. Public NDK Binder APIs cover local
+Binder classes, caller UID/PID, parcels, transactions, liveness, and death
+recipients. That lane is useful for Crawl Space and should remain available.
+
+It is not currently treated as a drop-in implementation of Shizuku's transparent
+remote-transaction path. Public NDK Binder does not expose the Java
+`clearCallingIdentity` / `restoreCallingIdentity` pair, and its transaction
+API uses an associated Binder class/interface descriptor rather than Shizuku's
+arbitrary target-Binder + copied-Parcel forwarding shape. Those differences need
+their own proof before claiming behavioral equivalence.
+
+For the faithful first translation, direct DEX/framework lowering therefore
+remains the narrower acceptance target. The NDK route is a parallel candidate,
+not a fallback silently substituted for it.
