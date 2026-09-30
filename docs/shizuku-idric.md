@@ -259,3 +259,100 @@ their own proof before claiming behavioral equivalence.
 For the faithful first translation, direct DEX/framework lowering therefore
 remains the narrower acceptance target. The NDK route is a parallel candidate,
 not a fallback silently substituted for it.
+
+
+## Lowering status
+
+The generic Binder branch has moved beyond the initial type inventory.
+
+### Direct DEX path
+
+The production DEX writer now has target support for the first Shizuku
+transaction slice:
+
+- globally sorted generated and external method references;
+- typed `invoke-static`, `invoke-virtual`, and `invoke-interface`;
+- ordinary, object, and wide move-result instructions;
+- `move-wide` for the opaque calling-identity token;
+- reference, `long`, and `void` method descriptors;
+- `outs_size` measured in DEX argument words;
+- catch-all `try_item` metadata;
+- `move-exception` and rethrow;
+- a verifier-facing rule that a catch handler starts with
+  `move-exception`.
+
+The generated framework probe now describes the important cleanup shape
+directly:
+
+```text
+identity ← Binder.clearCallingIdentity()
+
+try:
+    result ← target.transact(code, data, reply, flags)
+
+success:
+    Binder.restoreCallingIdentity(identity)
+
+catch all exception:
+    Binder.restoreCallingIdentity(identity)
+    throw exception
+```
+
+This is still a target-plan acceptance slice, not yet a claim that ordinary
+Idriç source lowers Binder calls automatically.
+
+### Public NDK path
+
+The public-NDK lane is narrower than the original experiment suggested.
+
+The packaged NDK contains the stable Binder/parcel/JNI bridge headers used for:
+
+- caller UID/PID while handling a Binder transaction;
+- `AIBinder` liveness and class association;
+- typed `AParcel` transactions;
+- Java `android.os.IBinder` → native `AIBinder` conversion through
+  `AIBinder_fromJavaBinder`.
+
+The ordinary packaged NDK does **not** contain the platform
+`binder_manager.h` or `binder_process.h` headers. Accordingly, the generic
+public-NDK façade no longer claims ServiceManager lookup or Binder process
+thread-pool control. It operates on a Binder handle delivered through an
+explicit boundary, such as JNI, or returned by another transaction.
+
+That lane also still lacks the Java clear/restore-calling-identity pair and the
+opaque `Parcel.appendFrom` operation needed by Shizuku's transparent forwarding
+mechanism. It remains useful, but it is not evidence for full Shizuku
+equivalence.
+
+### Checked-source path
+
+Source-level lowering is being kept separate from the already working target
+plan on branch:
+
+```text
+isomorphisms/android-NDK:binder/idric-shizuku-source
+```
+
+Its first contract is a checked foreign calling convention:
+
+```text
+dex:<static|virtual|interface>:<owner descriptor>:<method>:<DEX descriptor>
+```
+
+For example:
+
+```text
+dex:static:Landroid/os/Binder;:getCallingUid:()I
+dex:static:Landroid/os/Binder;:restoreCallingIdentity:(J)V
+dex:interface:Landroid/os/IBinder;:transact:(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
+```
+
+The backend parses the DEX descriptor and cross-checks it against the compiler's
+checked foreign `CFType` signature. Binder caller identity is deliberately
+treated as `PrimIO`: its `%World` argument and `IORes` result are part of the
+source semantics even though the eventual DEX method boundary should erase the
+world token and unwrap the newtype result.
+
+That source contract is being typechecked before it is admitted into
+`Lower.idr`. The next source-lowering step is therefore not name matching; it
+is explicit `PrimIO`/world erasure plus width-aware local register placement.
