@@ -14,7 +14,7 @@ request-action : String
 request-action = "rikka.shizuku.intent.action.REQUEST_BINDER"
 
 record Request : Set where
-  constructor request
+  constructor binder-request
   field
     action          : String
     receiver-binder : Maybe BinderHandle
