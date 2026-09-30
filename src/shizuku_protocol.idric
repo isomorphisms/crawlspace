@@ -1,0 +1,154 @@
+module CrawlSpace.ShizukuProtocol
+
+-- Idriç type sketch for the pinned Shizuku remote Binder protocol.
+--
+-- Source correspondence:
+--   RikkaApps/Shizuku
+--     b844bc491f1790c72328e1a8e5b2349f8978f0ea
+--   RikkaApps/Shizuku-API
+--     a27f6e4151ba7b39965ca47edb2bf0aeed7102e5
+--
+-- This is an intent/type sketch. It does not yet claim parser or DEX acceptance.
+
+data Binder
+data Parcel
+
+record AndroidUid where
+    constructor Uid
+    number : Number
+
+record AndroidPid where
+    constructor Pid
+    number : Number
+
+record BinderCaller where
+    constructor CallingProcess
+    uid : AndroidUid
+    pid : AndroidPid
+
+record ApiVersion where
+    constructor Api
+    number : Number
+
+record TransactionCode where
+    constructor Transaction
+    number : Number
+
+record TransactionFlags where
+    constructor Flags
+    number : Number
+
+data RemoteWireFormat
+    = FlagsInOuterTransaction
+    | FlagsInRemotePayload
+
+-- Shizuku API 13 moved the target flags into the forwarded payload.
+-- Older clients reuse the flags on the outer Shizuku transaction.
+wire format for api : ApiVersion → RemoteWireFormat
+
+data RemoteEnvelope : RemoteWireFormat → Type where
+    LegacyEnvelope
+        : Binder
+        → TransactionCode
+        → Parcel
+        → RemoteEnvelope FlagsInOuterTransaction
+
+    CurrentEnvelope
+        : Binder
+        → TransactionCode
+        → TransactionFlags
+        → Parcel
+        → RemoteEnvelope FlagsInRemotePayload
+
+record RemoteTransaction where
+    constructor Forward
+    target : Binder
+    code : TransactionCode
+    flags : TransactionFlags
+    request : Parcel
+
+data ProtocolError
+    = MissingTargetBinder
+    | MissingTransactionCode
+    | MissingTransactionFlags
+    | MalformedParcel
+
+decode remote transaction
+    : ApiVersion
+    → TransactionFlags
+    → Parcel
+    → Either ProtocolError RemoteTransaction
+
+-- Caller identity comes from Binder, never from the forwarded Parcel.
+calling process from binder : IO BinderCaller
+
+-- A cleared Binder identity is deliberately not represented as a raw integer token
+-- in domain code. Android's clearCallingIdentity/restoreCallingIdentity pair is
+-- lowered behind this scoped capability.
+data BrokerIdentityScope
+
+with broker identity
+    : (BrokerIdentityScope → IO result)
+    → IO result
+
+transact binder as broker
+    : BrokerIdentityScope
+    → Binder
+    → TransactionCode
+    → Parcel
+    → TransactionFlags
+    → IO Parcel
+
+-- The semantic forwarding operation. Lowering must implement restoration with
+-- cleanup semantics: target failure must not skip restoreCallingIdentity.
+forward remote transaction
+    : RemoteTransaction
+    → IO Parcel
+
+forward remote transaction transaction ≝
+    with broker identity $ \scope ⇒
+        transact binder as broker
+            scope
+            transaction.target
+            transaction.code
+            transaction.request
+            transaction.flags
+
+data BinderLife
+    = BinderAlive
+    | BinderDead
+
+ping binder : Binder → IO BinderLife
+
+data DeathSubscription
+
+on binder death
+    : Binder
+    → IO ()
+    → IO DeathSubscription
+
+stop watching binder death
+    : DeathSubscription
+    → IO ()
+
+-- Raw Android lowering still required:
+--
+--   calling process from binder
+--       Binder.getCallingUid()
+--       Binder.getCallingPid()
+--
+--   with broker identity
+--       token = Binder.clearCallingIdentity()
+--       try action
+--       finally Binder.restoreCallingIdentity(token)
+--
+--   transact binder as broker
+--       IBinder.transact(code, parcel, reply, flags)
+--
+--   on binder death
+--       IBinder.linkToDeath
+--
+-- The scoped interface is intentionally stricter than the Java source: the
+-- pinned Java implementation restores calling identity after transact, but not
+-- from its finally block. The Idriç boundary requires restoration on both
+-- success and failure.
