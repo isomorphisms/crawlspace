@@ -18,7 +18,7 @@ wait-timeout-seconds : Nat
 wait-timeout-seconds = 5
 
 record Request : Set where
-  constructor request
+  constructor service-request
   field
     token  : String
     binder : BinderHandle
