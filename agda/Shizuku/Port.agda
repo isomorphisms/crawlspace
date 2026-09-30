@@ -34,3 +34,6 @@ import Shizuku.Port.UserHandleCompat
 import Shizuku.Port.HandlerUtil
 import Shizuku.Port.BinderContainer
 import Shizuku.Port.Sui
+import Shizuku.Port.BaseService
+import Shizuku.Port.ServiceConnections
+import Shizuku.Port.Logger
