@@ -23,12 +23,12 @@ bridge-action-get-binder : Nat
 bridge-action-get-binder = 2
 
 record State : Set where
-  constructor state
+  constructor sui-state
   field
     is-sui : Bool
 
 initial : State
-initial = state false
+initial = sui-state false
 
 record InitResult : Set where
   constructor init-result
@@ -37,5 +37,5 @@ record InitResult : Set where
     binder : Maybe BinderHandle
 
 init : Maybe BinderHandle → InitResult
-init nothing = init-result (state false) nothing
-init (just binder) = init-result (state true) (just binder)
+init nothing = init-result (sui-state false) nothing
+init (just binder) = init-result (sui-state true) (just binder)
