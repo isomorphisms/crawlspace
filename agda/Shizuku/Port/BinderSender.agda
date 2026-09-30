@@ -26,12 +26,13 @@ select-target : List PackageCandidate → BinderTarget
 select-target [] = no-target
 select-target (package ∷ rest)
   with PackageCandidate.requests-manager package
-... | true with PackageCandidate.manager-permission-granted package
-...   | true = manager-target
-...   | false = select-target rest
-... | false with PackageCandidate.requests-api package
-...   | true = user-app-target (PackageCandidate.package-name package)
-...   | false = select-target rest
+     | PackageCandidate.manager-permission-granted package
+     | PackageCandidate.requests-api package
+... | true | true | _ = manager-target
+... | true | false | _ = select-target rest
+... | false | _ | true =
+  user-app-target (PackageCandidate.package-name package)
+... | false | _ | false = select-target rest
 
 record ObserverState : Set where
   constructor observer-state
