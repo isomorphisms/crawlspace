@@ -43,7 +43,7 @@ connect-plan =
 
 receive-initial :
   Nat → Command → Nat → HandshakeTransition
-receive-initial sdk start-tls arg0 with start-tls
+receive-initial sdk command arg0 with command
 ... | connection =
   handshake-transition (ready plain) []
 ... | Shizuku.Manager.Adb.Protocol.start-tls with 29 ≤ᵇ sdk
