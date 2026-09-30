@@ -8,7 +8,7 @@ open import Agda.Builtin.Nat using (Nat)
 open import Agda.Builtin.String using (String)
 
 record App : Set where
-  constructor app
+  constructor app-info
   field
     package-name : String
     uid          : Nat
