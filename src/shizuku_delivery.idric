@@ -1,0 +1,175 @@
+module CrawlSpace.ShizukuDelivery
+
+-- Type sketch of Shizuku Binder delivery to ordinary applications.
+-- The broker Binder reaches an app through its exported Shizuku ContentProvider;
+-- the app does not discover the Binder through ServiceManager.
+
+data Binder
+data ContentProvider
+
+record AndroidUid where
+    constructor Uid
+    number : Number
+
+record AndroidPid where
+    constructor Pid
+    number : Number
+
+record AndroidUser where
+    constructor User
+    number : Number
+
+record PackageName where
+    constructor Package
+    text : Text
+
+record ProviderName where
+    constructor Provider
+    text : Text
+
+record Duration where
+    constructor Milliseconds
+    number : Number
+
+record DeliveryTarget where
+    constructor Target
+    package : PackageName
+    user : AndroidUser
+
+data DeliveryAttempt
+    = FirstAttempt
+    | RetryAfterForceStop
+
+data DeliveryResult
+    = BinderDelivered
+    | ProviderMissing
+    | ProviderDead
+    | ProviderRejectedBinder
+    | DeliveryFailed
+
+provider name for package
+    : PackageName
+    → ProviderName
+
+temporarily exempt package from idle
+    : DeliveryTarget
+    → Duration
+    → IO ()
+
+open external provider
+    : ProviderName
+    → AndroidUser
+    → IO (Maybe ContentProvider)
+
+close external provider
+    : ProviderName
+    → IO ()
+
+provider binder
+    : ContentProvider
+    → Binder
+
+send binder through provider
+    : ContentProvider
+    → Binder
+    → IO Bool
+
+force stop package
+    : DeliveryTarget
+    → IO ()
+
+deliver broker binder
+    : Binder
+    → DeliveryTarget
+    → DeliveryAttempt
+    → IO DeliveryResult
+
+deliver broker binder broker target attempt ≝
+    temporarily exempt package from idle target (Milliseconds 30000)
+
+    provider ← open external provider
+        (provider name for package target.package)
+        target.user
+
+    case provider of
+        Nothing ⇒ return ProviderMissing
+
+        Just channel ⇒
+            life ← ping binder (provider binder channel)
+
+            case life of
+                BinderAlive ⇒
+                    accepted ← send binder through provider channel broker
+                    close external provider (provider name for package target.package)
+
+                    if accepted
+                        then return BinderDelivered
+                        else return ProviderRejectedBinder
+
+                BinderDead ⇒
+                    close external provider (provider name for package target.package)
+
+                    case attempt of
+                        RetryAfterForceStop ⇒ return ProviderDead
+
+                        FirstAttempt ⇒
+                            force stop package target
+                            sleep milliseconds 1000
+                            deliver broker binder broker target RetryAfterForceStop
+
+data BinderLife
+    = BinderAlive
+    | BinderDead
+
+ping binder : Binder → IO BinderLife
+sleep milliseconds : Number → IO ()
+
+-- Process/uid observation drives delivery to newly active clients.
+
+data ProcessEvent
+    = ProcessBecameActive AndroidPid AndroidUid
+    | ProcessDied AndroidPid AndroidUid
+    | UidBecameActive AndroidUid
+    | UidBecameCached AndroidUid Bool
+    | UidBecameIdle AndroidUid
+    | UidGone AndroidUid
+
+packages for uid
+    : AndroidUid
+    → IO (List PackageName)
+
+package requests broker api
+    : PackageName
+    → AndroidUser
+    → IO Bool
+
+user for uid
+    : AndroidUid
+    → AndroidUser
+
+deliver broker for process event
+    : Binder
+    → ProcessEvent
+    → IO ()
+
+-- Android lowering correspondence:
+--
+-- temporarily exempt package from idle
+--     DeviceIdleControllerApis.addPowerSaveTempWhitelistApp(..., 30000, ...)
+--
+-- open external provider
+--     ActivityManagerApis.getContentProviderExternal(package + ".shizuku", ...)
+--
+-- send binder through provider
+--     Bundle BinderContainer
+--     provider.call(..., "sendBinder", ...)
+--
+-- close external provider
+--     ActivityManagerApis.removeContentProviderExternal(...)
+--
+-- The external-provider token is intentionally null in pinned Shizuku. Crossing
+-- Binder creates a BinderProxy whose object hash is unsuitable as the map key
+-- later used for removal; null selects system_server's count-based path.
+--
+-- On a dead provider Shizuku force-stops the package once, sleeps one second,
+-- then retries exactly once. That retry limit is explicit in DeliveryAttempt.
