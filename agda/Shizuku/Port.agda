@@ -25,3 +25,12 @@ import Shizuku.Port.Handler
 import Shizuku.Port.ApkChangedObservers
 import Shizuku.Port.ShizukuUserServiceManager
 import Shizuku.Port.ShellLoader
+import Shizuku.Port.ShizukuProvider
+import Shizuku.Port.ShizukuRemoteProcess
+import Shizuku.Port.ShizukuSystemProperties
+import Shizuku.Port.ParcelFileDescriptorUtil
+import Shizuku.Port.AbiUtil
+import Shizuku.Port.UserHandleCompat
+import Shizuku.Port.HandlerUtil
+import Shizuku.Port.BinderContainer
+import Shizuku.Port.Sui
