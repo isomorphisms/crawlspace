@@ -21,25 +21,25 @@ record State : Set where
     cached        : Bool
 
 new : RemoteHandle → State
-new remote = process-process-state (just remote) nothing nothing true
+new remote = process-state (just remote) nothing nothing true
 
 remote-died : State → State
 remote-died old =
-  process-process-state nothing
+  process-state nothing
     (State.output-stream old)
     (State.input-stream old)
     false
 
 cache-output-stream : StreamHandle → State → State
 cache-output-stream stream old =
-  process-process-state (State.remote old)
+  process-state (State.remote old)
     (just stream)
     (State.input-stream old)
     (State.cached old)
 
 cache-input-stream : StreamHandle → State → State
 cache-input-stream stream old =
-  process-process-state (State.remote old)
+  process-state (State.remote old)
     (State.output-stream old)
     (just stream)
     (State.cached old)
