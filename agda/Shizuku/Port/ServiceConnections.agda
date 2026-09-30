@@ -2,10 +2,13 @@
 
 module Shizuku.Port.ServiceConnections where
 
+open import Agda.Builtin.Bool using (Bool)
 open import Agda.Builtin.List using (List; []; _∷_)
 open import Agda.Builtin.Maybe using (Maybe; nothing; just)
 open import Agda.Builtin.Nat using (Nat)
 open import Agda.Builtin.String using (String; primStringEquality)
+
+open import Shizuku.Port.Prelude using (nat-eq)
 
 ConnectionHandle : Set
 ConnectionHandle = Nat
@@ -36,6 +39,3 @@ remove-connection connection (entry ∷ rest)
   with nat-eq connection (CacheEntry.connection entry)
 ... | true = remove-connection connection rest
 ... | false = entry ∷ remove-connection connection rest
-  where
-  nat-eq : Nat → Nat → Agda.Builtin.Bool.Bool
-  nat-eq = Shizuku.Port.Prelude.nat-eq
