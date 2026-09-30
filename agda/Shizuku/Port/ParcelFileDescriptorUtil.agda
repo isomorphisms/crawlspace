@@ -24,7 +24,7 @@ record TransferPlan : Set where
   constructor transfer-plan
   field
     direction : StreamDirection
-    pipe      : Pipe
+    transfer-pipe : Pipe
     daemon-thread : Descriptor
 
 returned-side : StreamDirection → Pipe → Descriptor
