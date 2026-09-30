@@ -113,15 +113,19 @@ data CallResult : Set where
   binder-reply : BinderHandle → CallResult
   ok-reply    : CallResult
 
+get-binder-reply : ProviderState → CallResult
+get-binder-reply state with get-binder state
+... | nothing = null-reply
+... | just binder = binder-reply binder
+
+call-without-sui :
+  String → Maybe BinderHandle → ProviderState → CallResult
+call-without-sui method incoming state
+  with primStringEquality method method-get-binder
+... | true = get-binder-reply state
+... | false = ok-reply
+
 call : String → Maybe BinderHandle → ProviderState → CallResult
 call method incoming state with ProviderState.sui-active state
 ... | true = empty-reply
-... | false with primStringEquality method method-get-binder
-...   | true with get-binder state
-...     | nothing = null-reply
-...     | just binder = binder-reply binder
-...   | false with primStringEquality method method-send-binder
-...     | true with incoming
-...       | nothing = ok-reply
-...       | just binder = ok-reply
-...     | false = ok-reply
+... | false = call-without-sui method incoming state
