@@ -51,19 +51,17 @@ data PeekResult : Set where
 
 peek-result :
   Nat → Maybe ManagedService → Bool → PeekResult
-peek-result api-version nothing _ with 13 ≤ᵇ api-version
+peek-result api-version nothing service-alive with 13 ≤ᵇ api-version
 ... | true = v13-no-service
 ... | false = legacy-no-service
 peek-result api-version (just service) service-alive
-  with service-alive
-... | false with 13 ≤ᵇ api-version
-...   | true = v13-no-service
-...   | false = legacy-no-service
-... | true with 13 ≤ᵇ api-version
-...   | true =
-      v13-found
-        (UserServiceRecord.version-code (ManagedService.service-record service))
-...   | false = legacy-found
+  with service-alive | 13 ≤ᵇ api-version
+... | false | true = v13-no-service
+... | false | false = legacy-no-service
+... | true | true =
+  v13-found
+    (UserServiceRecord.version-code (ManagedService.service-record service))
+... | true | false = legacy-found
 
 record StartRequest : Set where
   constructor start-request
@@ -101,15 +99,15 @@ choose-existing :
   Maybe ManagedService →
   Maybe ExistingStatus →
   PeekResult
-choose-existing api-version no-create service status with no-create
-... | true with service
-...   | nothing = peek-result api-version nothing false
-...   | just existing with status
-...     | nothing = peek-result api-version (just existing) false
-...     | just s =
-        peek-result api-version (just existing)
-          (ExistingStatus.binder-alive s)
-... | false = legacy-found
+choose-existing api-version true nothing status =
+  peek-result api-version nothing false
+choose-existing api-version true (just existing) nothing =
+  peek-result api-version (just existing) false
+choose-existing api-version true (just existing) (just status) =
+  peek-result api-version (just existing)
+    (ExistingStatus.binder-alive status)
+choose-existing api-version false service status =
+  legacy-found
 
 should-reuse :
   Nat → ManagedService → ExistingStatus → Bool
