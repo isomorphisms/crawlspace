@@ -92,8 +92,8 @@ record-permission result state with PermissionResult.persistence result
       (PermissionResult.result-grant result)
       (ServerState.permissions state))
 
-attach-user-service : UserServiceRecord → ServerState → ServerState
-attach-user-service service state =
+register-user-service : UserServiceRecord → ServerState → ServerState
+register-user-service service state =
   server-state
     (ServerState.server-identity state)
     (ServerState.clients state)
