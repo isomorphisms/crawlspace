@@ -2,6 +2,7 @@
 
 module Shizuku.Port.SystemServiceHelper where
 
+open import Agda.Builtin.Bool using (true; false)
 open import Agda.Builtin.List using (List; []; _∷_)
 open import Agda.Builtin.Maybe using (Maybe; nothing; just)
 open import Agda.Builtin.Nat using (Nat)
