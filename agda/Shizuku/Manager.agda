@@ -17,3 +17,9 @@ import Shizuku.Manager.Adb.Mdns
 import Shizuku.Manager.Adb.Pairing
 import Shizuku.Manager.Adb.PairingService
 import Shizuku.Manager.Receiver
+import Shizuku.Manager.PermissionRequest
+import Shizuku.Manager.Apps
+import Shizuku.Manager.Home
+import Shizuku.Manager.SystemApis
+import Shizuku.Manager.ShellBinderRequest
+import Shizuku.Manager.Environment
