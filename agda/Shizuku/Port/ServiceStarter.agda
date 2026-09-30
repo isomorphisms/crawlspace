@@ -41,7 +41,7 @@ record UserServiceCommand : Set where
     process-name-suffix : String
     calling-uid         : Nat
     debug               : Bool
-    debug-mode          : DebugMode
+    selected-debug-mode : DebugMode
 
 make-user-service-command :
   BuildVersion →
