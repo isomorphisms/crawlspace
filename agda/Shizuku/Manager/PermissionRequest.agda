@@ -7,7 +7,7 @@ open import Agda.Builtin.List using (List; []; _∷_)
 open import Agda.Builtin.Nat using (Nat)
 
 record Request : Set where
-  constructor request
+  constructor permission-request
   field
     uid          : Nat
     pid          : Nat
