@@ -20,3 +20,8 @@ import Shizuku.Port.AIDL
 import Shizuku.Port.ShizukuService
 import Shizuku.Port.ShizukuConfigManager
 import Shizuku.Port.ClientApi
+import Shizuku.Port.OsUtils
+import Shizuku.Port.Handler
+import Shizuku.Port.ApkChangedObservers
+import Shizuku.Port.ShizukuUserServiceManager
+import Shizuku.Port.ShellLoader
