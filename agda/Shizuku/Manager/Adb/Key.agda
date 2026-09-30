@@ -4,7 +4,7 @@ module Shizuku.Manager.Adb.Key where
 
 open import Agda.Builtin.Bool using (Bool)
 open import Agda.Builtin.List using (List)
-open import Agda.Builtin.Maybe using (Maybe)
+open import Agda.Builtin.Maybe using (Maybe; nothing; just)
 open import Agda.Builtin.Nat using (Nat)
 open import Agda.Builtin.String using (String)
 
@@ -52,9 +52,9 @@ data PrivateKeyDecision : Set where
 
 choose-private-key : Maybe Bytes → Bool → PrivateKeyDecision
 choose-private-key nothing decrypts = generate-rsa-private-key
-choose-private-key (Agda.Builtin.Maybe.just bytes) true =
+choose-private-key (just bytes) true =
   use-stored-private-key bytes
-choose-private-key (Agda.Builtin.Maybe.just bytes) false =
+choose-private-key (just bytes) false =
   generate-rsa-private-key
 
 record AdbPublicKeyLayout : Set where
