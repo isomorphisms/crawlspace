@@ -18,7 +18,7 @@ data CachedNat : Set where
   known-nat   : Nat → CachedNat
 
 record State : Set where
-  constructor state
+  constructor client-state
   field
     binder          : Maybe BinderHandle
     binder-ready    : Bool
@@ -31,7 +31,7 @@ record State : Set where
 
 initial : State
 initial =
-  state nothing false false unknown-nat unknown-nat nothing false false
+  client-client-state nothing false false unknown-nat unknown-nat nothing false false
 
 data Effect : Set where
   link-death                 : BinderHandle → Effect
@@ -51,7 +51,7 @@ record Transition : Set where
 binder-lost : State → Transition
 binder-lost old =
   transition
-    (state nothing false (State.pre-v11 old)
+    (client-client-state nothing false (State.pre-v11 old)
       unknown-nat unknown-nat nothing false false)
     (notify-binder-dead ∷ [])
 
@@ -59,7 +59,7 @@ binder-received : BinderHandle → String → State → Transition
 binder-received new-binder package-name old with State.binder old
 ... | nothing =
   transition
-    (state (just new-binder) false (State.pre-v11 old)
+    (client-client-state (just new-binder) false (State.pre-v11 old)
       unknown-nat unknown-nat nothing
       (State.permission-granted old)
       (State.show-rationale old))
@@ -68,7 +68,7 @@ binder-received new-binder package-name old with State.binder old
      try-attach-v11 new-binder package-name ∷ [])
 ... | just old-binder =
   transition
-    (state (just new-binder) false (State.pre-v11 old)
+    (client-client-state (just new-binder) false (State.pre-v11 old)
       unknown-nat unknown-nat nothing
       (State.permission-granted old)
       (State.show-rationale old))
@@ -80,7 +80,7 @@ binder-received new-binder package-name old with State.binder old
 attach-both-failed : State → Transition
 attach-both-failed old =
   transition
-    (state
+    (client-state
       (State.binder old)
       true
       true
@@ -103,7 +103,7 @@ record BindApplicationReply : Set where
 bind-application : BindApplicationReply → State → Transition
 bind-application reply old =
   transition
-    (state
+    (client-state
       (State.binder old)
       true
       false
@@ -117,7 +117,7 @@ bind-application reply old =
 permission-result : Nat → Bool → State → Transition
 permission-result request-code allowed old =
   transition
-    (state
+    (client-state
       (State.binder old)
       (State.binder-ready old)
       (State.pre-v11 old)
