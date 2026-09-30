@@ -38,15 +38,15 @@ record BroadcastFailure : Set where
     package-name-error  : Bool
 
 fallback-method : BroadcastFailure → Maybe RequestMethod
-fallback-method failure with nat-eq (BroadcastFailure.sdk failure) 26
-... | true with BroadcastFailure.package-name-error failure
-...   | true = just chooser-activity-request
-...   | false = nothing
-... | false with nat-eq (BroadcastFailure.sdk failure) 27
-...   | true with BroadcastFailure.package-name-error failure
-...     | true = just chooser-activity-request
-...     | false = nothing
-...   | false = nothing
+fallback-method failure
+  with nat-eq (BroadcastFailure.sdk failure) 26
+     | nat-eq (BroadcastFailure.sdk failure) 27
+     | BroadcastFailure.package-name-error failure
+... | true | _ | true = just chooser-activity-request
+... | true | _ | false = nothing
+... | false | true | true = just chooser-activity-request
+... | false | true | false = nothing
+... | false | false | _ = nothing
 
 record ShellLoadPlan : Set where
   constructor shell-load-plan
