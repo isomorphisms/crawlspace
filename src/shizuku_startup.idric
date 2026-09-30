@@ -1,0 +1,190 @@
+module CrawlSpace.ShizukuStartup
+
+-- Type sketch of Shizuku's native starter.
+-- Source: RikkaApps/Shizuku manager/src/main/jni/starter.cpp
+-- pinned at b844bc491f1790c72328e1a8e5b2349f8978f0ea.
+
+record AndroidUid where
+    constructor Uid
+    number : Number
+
+record ProcessId where
+    constructor Pid
+    number : Number
+
+record ApkPath where
+    constructor Apk
+    text : Text
+
+record ExecutablePath where
+    constructor Executable
+    text : Text
+
+record JavaClass where
+    constructor Class
+    text : Text
+
+record ProcessName where
+    constructor Name
+    text : Text
+
+record SelinuxContext where
+    constructor Context
+    text : Text
+
+data LaunchAuthority
+    = AdbShell
+    | Root
+
+data StarterError
+    = UnsupportedUid AndroidUid
+    | BinderBlockedBySelinux SelinuxContext
+    | ExistingServerCannotBeKilled ProcessId
+    | ManagerApkNotFound
+    | ManagerApkUnreadable ApkPath
+    | CannotFork
+    | AppProcessExecFailed
+
+authority for uid
+    : AndroidUid
+    → Either StarterError LaunchAuthority
+
+data RootPreparation
+    = CgroupAdjusted
+    | CgroupUnchanged
+
+prepare root launch
+    : IO RootPreparation
+
+data BinderAccess
+    = BinderCall
+    | BinderTransfer
+
+application can reach server context
+    : SelinuxContext
+    → BinderAccess
+    → IO Bool
+
+verify root binder reachability
+    : SelinuxContext
+    → IO (Either StarterError ())
+
+record ServerImage where
+    constructor Image
+    apk : ApkPath
+    library_path : Text
+    main_class : JavaClass
+
+find manager apk
+    : Maybe ApkPath
+    → IO (Either StarterError ApkPath)
+
+data ExistingServer
+    = NoExistingServer
+    | ExistingServer ProcessId
+
+find existing server
+    : ProcessName
+    → IO ExistingServer
+
+kill existing server
+    : ExistingServer
+    → IO (Either StarterError ())
+
+record AppProcessLaunch where
+    constructor Launch
+    executable : ExecutablePath
+    class_path : ApkPath
+    library_path : Text
+    working_directory : Text
+    process_name : ProcessName
+    main_class : JavaClass
+    vm_arguments : List Text
+
+server launch
+    : ServerImage
+    → AppProcessLaunch
+
+data DetachedServer where
+    constructor Detached
+    pid : ProcessId
+
+start detached server
+    : AppProcessLaunch
+    → IO (Either StarterError DetachedServer)
+
+start broker process
+    : Maybe ApkPath
+    → IO (Either StarterError DetachedServer)
+
+start broker process supplied_apk ≝
+    uid ← current uid
+    authority ← authority for uid uid
+
+    case authority of
+        Root ⇒
+            prepare root launch
+            context ← current selinux context
+            verify root binder reachability context
+
+        AdbShell ⇒
+            return ()
+
+    old ← find existing server (Name "shizuku_server")
+    kill existing server old
+
+    apk ← find manager apk supplied_apk
+    image ← server image from apk apk
+
+    start detached server (server launch image)
+
+current uid : IO AndroidUid
+current selinux context : IO SelinuxContext
+server image from apk : ApkPath → IO ServerImage
+
+-- Pinned native behavior represented above:
+--
+-- accepted starter uid
+--     0     → Root
+--     2000  → AdbShell
+--     other → UnsupportedUid
+--
+-- root preparation
+--     try cgroup locations in order:
+--       /acct
+--       /dev/cg2_bpf
+--       /sys/fs/cgroup
+--       /dev/memcg/apps when per-app memcg is enabled
+--
+--     Android API >= 29:
+--       switch mount namespace to init's namespace
+--
+-- root SELinux preflight
+--     prove untrusted_app can both binder call and binder transfer to the
+--     starter/server context before launching.
+--
+-- manager apk discovery
+--     prefer readable --apk=...
+--     otherwise use: pm path moe.shizuku.privileged.api
+--
+-- process replacement
+--     find processes named shizuku_server and kill old server before launch.
+--
+-- app_process launch
+--     CLASSPATH=<manager apk>
+--     /system/bin/app_process
+--     -Djava.class.path=<manager apk>
+--     -Dshizuku.library.path=<apk directory>/lib/<abi>
+--     /system/bin
+--     --nice-name=shizuku_server
+--     rikka.shizuku.server.ShizukuService
+--
+-- detached child
+--     fork
+--     setsid
+--     chdir /
+--     stdin/stdout/stderr → /dev/null
+--     exec app_process
+--
+-- The Idriç version should lower this to direct process/environment primitives,
+-- not reproduce starter.cpp's realloc-based argv builder.
