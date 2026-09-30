@@ -2,7 +2,7 @@
 
 module Shizuku.Port.UserHandleCompat where
 
-open import Agda.Builtin.Nat using (Nat)
+open import Agda.Builtin.Nat using (Nat; zero; suc)
 
 per-user-range : Nat
 per-user-range = 100000
