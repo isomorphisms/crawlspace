@@ -31,7 +31,7 @@ record State : Set where
 
 initial : State
 initial =
-  client-client-state nothing false false unknown-nat unknown-nat nothing false false
+  client-state nothing false false unknown-nat unknown-nat nothing false false
 
 data Effect : Set where
   link-death                 : BinderHandle → Effect
@@ -51,7 +51,7 @@ record Transition : Set where
 binder-lost : State → Transition
 binder-lost old =
   transition
-    (client-client-state nothing false (State.pre-v11 old)
+    (client-state nothing false (State.pre-v11 old)
       unknown-nat unknown-nat nothing false false)
     (notify-binder-dead ∷ [])
 
@@ -59,7 +59,7 @@ binder-received : BinderHandle → String → State → Transition
 binder-received new-binder package-name old with State.binder old
 ... | nothing =
   transition
-    (client-client-state (just new-binder) false (State.pre-v11 old)
+    (client-state (just new-binder) false (State.pre-v11 old)
       unknown-nat unknown-nat nothing
       (State.permission-granted old)
       (State.show-rationale old))
@@ -68,7 +68,7 @@ binder-received new-binder package-name old with State.binder old
      try-attach-v11 new-binder package-name ∷ [])
 ... | just old-binder =
   transition
-    (client-client-state (just new-binder) false (State.pre-v11 old)
+    (client-state (just new-binder) false (State.pre-v11 old)
       unknown-nat unknown-nat nothing
       (State.permission-granted old)
       (State.show-rationale old))
