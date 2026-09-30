@@ -11,3 +11,4 @@ import Shizuku.Client
 import Shizuku.Starter
 import Shizuku.Android
 import Shizuku.Port
+import Shizuku.Manager
