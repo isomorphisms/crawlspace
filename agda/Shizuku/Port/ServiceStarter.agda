@@ -33,7 +33,7 @@ choose-app-process use32 app-process32-exists with use32 && app-process32-exists
 record UserServiceCommand : Set where
   constructor user-service-command
   field
-    app-process         : AppProcess
+    selected-app-process : AppProcess
     manager-apk-path    : String
     token               : String
     package-name        : String
