@@ -5,6 +5,8 @@ module Shizuku.Manager.Shell where
 open import Agda.Builtin.Bool using (Bool; true; false)
 open import Agda.Builtin.Nat using (Nat)
 
+open import Shizuku.Port.Prelude
+
 data PermissionState : Set where
   granted : PermissionState
   denied-with-rationale : PermissionState
@@ -25,24 +27,6 @@ data VersionDecision : Set where
   server-too-old : Nat → VersionDecision
 
 check-server-version : Nat → VersionDecision
-check-server-version version with less-than-12 version
-... | true = server-too-old version
-... | false = version-ok
-  where
-  less-than-12 : Nat → Bool
-  less-than-12 zero = true
-  less-than-12 (Agda.Builtin.Nat.suc n) = go n
-    where
-    go : Nat → Bool
-    go zero = true
-    go (Agda.Builtin.Nat.suc zero) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero)) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero)))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero))))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero)))))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero))))))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero)))))))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero))))))))) = true
-    go (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc (Agda.Builtin.Nat.suc zero)))))))))) = true
-    go _ = false
+check-server-version version with 12 ≤ᵇ version
+... | true = version-ok
+... | false = server-too-old version
