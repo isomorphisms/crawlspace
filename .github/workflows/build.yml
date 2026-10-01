@@ -6,6 +6,7 @@ on:
       - main
       - adb-shell-bridge
       - capability-discovery-v1
+      - longview-control-plane
   pull_request:
 
 permissions:
@@ -21,6 +22,10 @@ jobs:
         # The production daemon deliberately refuses ordinary application UIDs.
         # Root is the host-test analogue of the accepted Android root/shell IDs.
         run: sudo make test
+
+      - name: Check Longview acceptance harness syntax
+        shell: sh
+        run: sh -n scripts/longview_control_acceptance.sh
 
   android:
     runs-on: ubuntu-latest

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -187,6 +188,50 @@ static int run_client(const char *binary,
     return WIFEXITED(status) ? WEXITSTATUS(status) : 255;
 }
 
+static pid_t start_client_process(const char *binary,
+                                  const char *token,
+                                  int port,
+                                  const char *verb,
+                                  const char *argument) {
+    pid_t child = fork();
+    if (child < 0) fail("fork asynchronous client");
+    if (child == 0) {
+        char port_text[16];
+        snprintf(port_text, sizeof(port_text), "%d", port);
+        setenv("CRAWLSPACE_PORT", port_text, 1);
+        setenv("CRAWLSPACE_TOKEN_FILE", token, 1);
+        setenv("CRAWLSPACE_TIMEOUT_MS", "500", 1);
+        int null = open("/dev/null", O_WRONLY);
+        if (null >= 0) {
+            dup2(null, STDOUT_FILENO);
+            dup2(null, STDERR_FILENO);
+            close(null);
+        }
+        if (argument == NULL) {
+            execl(binary, binary, verb, (char *)NULL);
+        } else {
+            execl(binary, binary, verb, argument, (char *)NULL);
+        }
+        _exit(127);
+    }
+    return child;
+}
+
+static int wait_client_process(pid_t child) {
+    int status;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 255;
+}
+
+static void wait_for_file(const char *path) {
+    for (int attempt = 0; attempt < 200; attempt++) {
+        if (access(path, F_OK) == 0) return;
+        usleep(10000);
+    }
+    fail("worker did not reach its started marker");
+}
+
 static void expect_contains(const char *output, const char *expected) {
     if (strstr(output, expected) == NULL) {
         fprintf(stderr, "missing [%s] in:\n%s\n", expected, output);
@@ -303,11 +348,24 @@ int main(int argc, char **argv) {
     expect_contains(output, "authorization_scope=local-bearer-token\n");
     expect_contains(output, "capability=crawlspace.discovery.v1\n");
     expect_contains(output, "capability=crawlspace.run.absolute-path.v1\n");
-    if (count_occurrences(output, "capability=") != 2) {
+    expect_contains(output, "capability=crawlspace.runtime-identity.v1\n");
+    if (count_occurrences(output, "capability=") != 3) {
         fail("discovery returned a capability outside the allowlist");
     }
     char first_identity[33];
     extract_identity(output, first_identity);
+
+    if (run_client(argv[1], token_path, port, "500", "identify", NULL,
+                   output) != 0) fail("runtime identity");
+    expect_contains(output, "status=ready\n");
+    expect_contains(output, "identity_version=1\n");
+    expect_contains(output, "daemon_authority=root\n");
+    expect_contains(output, "daemon_role=native-command-bridge\n");
+    expect_contains(output, "build_id=");
+    char daemon_pid_text[64];
+    snprintf(daemon_pid_text, sizeof(daemon_pid_text),
+             "daemon_pid=%u\n", (unsigned)daemon);
+    expect_contains(output, daemon_pid_text);
 
     if (run_client(argv[1], token_path, port, "500", "discover",
                    first_identity, output) != 0) fail("same-daemon discovery");
@@ -350,7 +408,37 @@ int main(int argc, char **argv) {
         fail("daemon did not recover from partial request timeout");
     }
 
+    char slow_path[512];
+    char slow_marker[512];
+    snprintf(slow_path, sizeof(slow_path), "%s/slow-worker.sh", directory);
+    snprintf(slow_marker, sizeof(slow_marker), "%s/slow.started", directory);
+    FILE *slow = fopen(slow_path, "w");
+    if (slow == NULL) fail("create slow worker");
+    fprintf(slow, "#!/bin/sh\n: > '%s'\nsleep 2\n", slow_marker);
+    fclose(slow);
+    if (chmod(slow_path, 0700) < 0) fail("chmod slow worker");
+
+    pid_t slow_client =
+        start_client_process(argv[1], token_path, port, "run", slow_path);
+    wait_for_file(slow_marker);
+
+    if (run_client(argv[1], token_path, port, "500", "discover", NULL,
+                   output) != 0) {
+        fail("discovery blocked behind an active run");
+    }
+    expect_contains(output, "status=ready\n");
+
     stop_child(daemon);
+    if (run_client(argv[1], token_path, port, "100", "discover", NULL,
+                   output) != 69) {
+        fail("listener remained reachable after daemon death");
+    }
+    expect_contains(output, "status=unavailable\nreason=daemon-absent\n");
+
+    if (wait_client_process(slow_client) != 0) {
+        fail("in-flight run did not finish after listener death");
+    }
+
     daemon = start_daemon(argv[1], token_path, port);
     if (run_client(argv[1], token_path, port, "500", "discover",
                    first_identity, output) != 0) fail("restart discovery");
@@ -373,10 +461,12 @@ int main(int argc, char **argv) {
     expect_contains(output, "status=unavailable\nreason=timeout\n");
     stop_child(stall);
 
+    unlink(slow_marker);
+    unlink(slow_path);
     unlink(token_path);
     unlink(wrong_token_path);
     rmdir(directory);
-    puts("PASS: host protocol discovery, denial, malformed input, restart, "
-         "absence, timeout, and CSP1 run");
+    puts("PASS: host protocol discovery, runtime identity, concurrent control, "
+         "listener disappearance, restart, absence, timeout, and CSP1 run");
     return 0;
 }

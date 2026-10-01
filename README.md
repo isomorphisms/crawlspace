@@ -74,7 +74,34 @@ daemon_uid=2000
 authorization_scope=local-bearer-token
 capability=crawlspace.discovery.v1
 capability=crawlspace.run.absolute-path.v1
+capability=crawlspace.runtime-identity.v1
 ```
+
+For the identity of the process that owns the listening control plane:
+
+```sh
+crawlspace identify
+```
+
+A current response separates continuity, process identity, authority, role, and
+the exact source build:
+
+```text
+status=ready
+transport_version=2
+identity_version=1
+daemon_start_identity=0123456789abcdef0123456789abcdef
+daemon_pid=1234
+daemon_uid=2000
+daemon_authority=shell
+daemon_role=native-command-bridge
+build_id=81587108d3eab33cec5f1470ac86d0c453f1ff1b
+authorization_scope=local-bearer-token
+```
+
+The random start identity is a continuity marker. The build ID identifies the
+compiled Crawl Space source. Neither field claims that an installed Shizuku
+manager/server has the same identity.
 
 Pass the last observed identity to detect a daemon replacement:
 
@@ -99,3 +126,31 @@ Commands must currently use an absolute executable path.
 See [`docs/design.md`](docs/design.md) for the boundary and
 [`docs/protocol.md`](docs/protocol.md) for the exact discovery, authentication,
 timeout, and restart contracts.
+
+
+## Longview control acceptance
+
+After installing the exact Android binary on a phone, the non-disruptive
+Longview control check is:
+
+```sh
+sh scripts/longview_control_acceptance.sh
+```
+
+It verifies the listener identity, runs one bounded shell command, and proves
+`crawlspace discover` remains responsive while that command is still active.
+
+The stronger lifetime test is intentionally explicit because it stops the
+listener:
+
+```sh
+sh scripts/longview_control_acceptance.sh --kill-listener
+```
+
+That test proves the listener endpoint disappears while an already accepted
+bounded command still reaches its result. It leaves Crawl Space stopped; use the
+normal bootstrap/start path afterwards.
+
+This is process/transport evidence only. It is not evidence that an IB task was
+retained, that a committed result can be reopened, or that Shizuku survived a
+restart.

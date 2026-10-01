@@ -23,7 +23,8 @@ The first discovery request has this exact layout:
 
 1. four bytes `CSP2`;
 2. counted bearer token, from 1 through 256 bytes on the wire;
-3. operation number `1`, meaning `discover capabilities`;
+3. operation number: `1` means `discover capabilities`, and `2` means
+   `report native control-plane runtime identity`;
 4. expected daemon identity length, either `0` or `16`;
 5. the expected 16 identity bytes when the length is `16`.
 
@@ -54,6 +55,7 @@ Schema version 1 emits only this compiled allowlist:
 
 - `crawlspace.discovery.v1`
 - `crawlspace.run.absolute-path.v1`
+- `crawlspace.runtime-identity.v1`
 
 The list describes operations understood by this daemon. It grants no new
 authority. In particular, it makes no claim about Binder, root, SELinux
@@ -105,3 +107,49 @@ The discovery CLI reports machine-readable availability outcomes:
 discard assumptions tied to the old identity and use the capability list in the
 new response. A caller that supplies no prior identity receives `status=ready`
 because it requested no continuity comparison.
+
+
+## Runtime identity operation
+
+Authenticated operation `2` uses the same expected-start-identity comparison
+and the same ready/restarted status. Its payload is deliberately separate from
+the capability list:
+
+1. identity schema version, currently `1`;
+2. UID of the listener-owning daemon;
+3. PID of the listener-owning daemon;
+4. counted 16-byte per-start identity;
+5. counted role string, currently `native-command-bridge`;
+6. counted authority string, `shell` or `root`;
+7. counted build ID compiled into the binary.
+
+The CLI renders this as `crawlspace identify [EXPECTED_DAEMON_ID]`. The PID is
+not a stable identity and can be reused. The random start identity distinguishes
+daemon starts; the build ID identifies source provenance. Consumers that need a
+stable process handle must use both the relevant generation identity and their
+own operation identity rather than a PID alone.
+
+This report describes Crawl Space's native command bridge only. It does not
+assert the version or generation of the installed Shizuku manager or its running
+server.
+
+## Concurrent control-plane handling
+
+The listener forks a short-lived connection handler for each accepted request.
+A long `CSP1` command therefore does not prevent new discovery/identity
+requests from being accepted. The listener and accepted sockets are
+close-on-exec, and the command child explicitly closes the control connection
+before `exec`.
+
+The listener process reaps completed connection handlers. A handler resets
+`SIGCHLD` before it starts a command so it can still wait for the command's
+actual exit status.
+
+The acceptance test proves two Longview-relevant properties:
+
+- capability discovery remains responsive while a command is still running;
+- killing the listener makes the port disappear even while an already accepted
+  command continues to completion.
+
+This is not yet an asynchronous retained-worker protocol. `CSP1` still couples
+one client connection to one command response, and stdout/stderr remain combined.

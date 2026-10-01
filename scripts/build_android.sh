@@ -10,6 +10,9 @@ if [ -z "$ndk" ]; then
     exit 2
 fi
 
+build_id=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)
+build_define="-DCRAWLSPACE_BUILD_ID=\"$build_id\""
+
 prebuilt=$ndk/toolchains/llvm/prebuilt
 toolchain=
 for candidate in "$prebuilt"/*; do
@@ -49,6 +52,7 @@ build_one() {
         -Os \
         -fPIE -pie \
         -Wall -Wextra -Werror \
+        "$build_define" \
         "$repo_root/src/crawlspace.c" \
         -o "$out/crawlspace"
 
