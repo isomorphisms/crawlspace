@@ -132,7 +132,9 @@ public:
         ConfigEntry[] result;
         foreach (entry; entries)
         {
-            ConfigEntry copy = entry;
+            ConfigEntry copy;
+            copy.uid = entry.uid;
+            copy.flags = entry.flags;
             copy.packages = entry.packages.dup;
             result ~= copy;
         }
