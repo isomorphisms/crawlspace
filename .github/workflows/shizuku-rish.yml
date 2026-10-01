@@ -20,10 +20,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Install Android SDK 36
+      - name: Install Shizuku Android SDK requirements
         shell: bash
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          set +o pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;29.0.13113456"
       - name: Build controlled Shizuku rish bundle
         shell: sh
         run: sh scripts/package_shizuku_rish.sh
