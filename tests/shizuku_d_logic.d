@@ -4,6 +4,7 @@ import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.service;
 import crawlspace.shizuku.types;
+import crawlspace.shizuku.user_service;
 
 private BinderHandle binder_handle(size_t value)
 {
@@ -470,6 +471,254 @@ unittest
     assert(fake.sleeps == 1);
     assert(fake.sends == 1);
     assert(fake.closed == 2);
+}
+
+private ConnectionHandle connection_handle(size_t value)
+{
+    return ConnectionHandle(cast(void*) value);
+}
+
+private class UserServiceFake
+{
+    int token_counter;
+    int pings;
+    int links;
+    int unlinks;
+    int destroys;
+    int connected;
+    int starts;
+    StartRequest last_start;
+
+    bool package_owned_by_caller(string package_name, int app_id, int user_id)
+    {
+        return package_name == "example.client" &&
+            app_id == 12_345 &&
+            user_id == 1;
+    }
+
+    bool ping_service_binder(BinderHandle binder)
+    {
+        ++pings;
+        return binder.valid;
+    }
+
+    string token_factory()
+    {
+        ++token_counter;
+        return token_counter == 1 ? "token-1" : "token-2";
+    }
+
+    bool link_service_death(BinderHandle, UserServiceIdentity)
+    {
+        ++links;
+        return true;
+    }
+
+    void unlink_service_death(BinderHandle, UserServiceIdentity)
+    {
+        ++unlinks;
+    }
+
+    void destroy_service_binder(BinderHandle)
+    {
+        ++destroys;
+    }
+
+    void notify_connected(ConnectionHandle, BinderHandle)
+    {
+        ++connected;
+    }
+
+    void schedule_start(StartRequest request)
+    {
+        ++starts;
+        last_start = request;
+    }
+}
+
+private UserServiceOps user_service_ops(UserServiceFake fake)
+{
+    UserServiceOps ops;
+    ops.package_owned_by_caller = &fake.package_owned_by_caller;
+    ops.ping_service_binder = &fake.ping_service_binder;
+    ops.token_factory = &fake.token_factory;
+    ops.link_service_death = &fake.link_service_death;
+    ops.unlink_service_death = &fake.unlink_service_death;
+    ops.destroy_service_binder = &fake.destroy_service_binder;
+    ops.notify_connected = &fake.notify_connected;
+    ops.schedule_start = &fake.schedule_start;
+    return ops;
+}
+
+private UserServiceOptions service_options(
+    int version_code = 7,
+    bool daemon = true,
+    bool no_create = false)
+{
+    UserServiceOptions options;
+    options.package_name = "example.client";
+    options.class_name = "example.Service";
+    options.version_code = version_code;
+    options.daemon = daemon;
+    options.no_create = no_create;
+    return options;
+}
+
+unittest
+{
+    UserServiceRegistry registry;
+    auto fake = new UserServiceFake;
+    auto ops = user_service_ops(fake);
+    auto options = service_options();
+
+    auto created = add_user_service(
+        registry,
+        connection_handle(1),
+        options,
+        13,
+        112_345,
+        ops);
+
+    assert(created.ok);
+    assert(created.wire_result == 0);
+    assert(created.start_requested);
+    assert(fake.starts == 1);
+    assert(fake.last_start.identity == created.identity);
+    assert(registry.length == 1);
+
+    auto record = registry.find_by_key(user_service_key(options));
+    assert(record !is null);
+    assert(record.starting);
+    assert(record.identity.token == "token-1");
+
+    auto attach_error = attach_user_service(
+        registry,
+        binder_handle(300),
+        record.identity.token,
+        ops);
+
+    assert(attach_error == UserServiceError.none);
+    assert(fake.links == 1);
+    assert(fake.connected == 1);
+
+    options.no_create = true;
+    auto existing = add_user_service(
+        registry,
+        connection_handle(2),
+        options,
+        13,
+        112_345,
+        ops);
+
+    assert(existing.ok);
+    assert(existing.wire_result == 7);
+    assert(!existing.start_requested);
+    assert(fake.connected == 3);
+}
+
+unittest
+{
+    UserServiceRegistry registry;
+    auto fake = new UserServiceFake;
+    auto ops = user_service_ops(fake);
+
+    auto options = service_options();
+    options.no_create = true;
+
+    auto modern = add_user_service(
+        registry,
+        connection_handle(1),
+        options,
+        13,
+        112_345,
+        ops);
+    assert(modern.wire_result == -1);
+
+    auto legacy = add_user_service(
+        registry,
+        connection_handle(1),
+        options,
+        12,
+        112_345,
+        ops);
+    assert(legacy.wire_result == 1);
+}
+
+unittest
+{
+    UserServiceRegistry registry;
+    auto fake = new UserServiceFake;
+    auto ops = user_service_ops(fake);
+
+    auto options = service_options(7);
+    auto first = add_user_service(
+        registry,
+        connection_handle(1),
+        options,
+        13,
+        112_345,
+        ops);
+    assert(first.start_requested);
+
+    auto record = registry.find_by_key(user_service_key(options));
+    assert(record !is null);
+    assert(
+        attach_user_service(
+            registry,
+            binder_handle(400),
+            record.identity.token,
+            ops) == UserServiceError.none);
+
+    options.version_code = 8;
+    auto replacement = add_user_service(
+        registry,
+        connection_handle(2),
+        options,
+        13,
+        112_345,
+        ops);
+
+    assert(replacement.start_requested);
+    assert(replacement.identity.generation != first.identity.generation);
+    assert(fake.unlinks == 1);
+    assert(fake.destroys == 1);
+    assert(fake.starts == 2);
+    assert(registry.length == 1);
+}
+
+unittest
+{
+    UserServiceRegistry registry;
+    auto fake = new UserServiceFake;
+    auto ops = user_service_ops(fake);
+
+    auto options = service_options(7, false);
+    auto created = add_user_service(
+        registry,
+        connection_handle(1),
+        options,
+        13,
+        112_345,
+        ops);
+
+    auto record = registry.find_by_key(user_service_key(options));
+    assert(record !is null);
+
+    assert(
+        attach_user_service(
+            registry,
+            binder_handle(500),
+            record.identity.token,
+            ops) == UserServiceError.none);
+
+    assert(user_service_connection_died(
+        registry,
+        created.identity,
+        connection_handle(1),
+        ops));
+
+    assert(registry.length == 0);
+    assert(fake.destroys == 1);
 }
 
 void main()
