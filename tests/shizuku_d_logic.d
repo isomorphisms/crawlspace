@@ -1289,9 +1289,18 @@ private RishHostOps rish_ops(RishFake fake)
     return ops;
 }
 
-private bool allow_rish(string)
+private class RishPermissionFake
 {
-    return true;
+    bool allow(string)
+    {
+        return true;
+    }
+}
+
+private EnforceRishPermission allow_rish_permission()
+{
+    auto permission = new RishPermissionFake;
+    return &permission.allow;
 }
 
 unittest
@@ -1350,7 +1359,7 @@ unittest
         true,
         0,
         request,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
 
     assert(created.handled);
@@ -1367,7 +1376,7 @@ unittest
         hosts,
         901,
         0x1122334455667788UL,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
 
     assert(size.host_found);
@@ -1377,7 +1386,7 @@ unittest
     auto exit = dispatch_rish_get_exit_code(
         hosts,
         901,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
 
     assert(exit.host_found);
@@ -1402,7 +1411,7 @@ unittest
         true,
         binder_flag_oneway,
         request,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
 
     assert(oneway.handled);
@@ -1417,7 +1426,7 @@ unittest
         false,
         0,
         request,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
 
     assert(no_reply.handled);
@@ -1441,7 +1450,7 @@ unittest
         true,
         0,
         first,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
     assert(a.host_created);
 
@@ -1455,7 +1464,7 @@ unittest
         true,
         0,
         second,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
     assert(b.host_created);
 
@@ -1469,7 +1478,7 @@ unittest
     auto exit = dispatch_rish_get_exit_code(
         hosts,
         903,
-        &allow_rish,
+        allow_rish_permission(),
         ops);
     assert(exit.exit_code == 23);
 }
