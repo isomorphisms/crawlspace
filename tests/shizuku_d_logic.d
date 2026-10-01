@@ -215,6 +215,7 @@ private class ServiceFake
     TransactionFlags seen_flags;
     bool recycled;
     bool restored;
+    int target_releases;
     bool throw_from_target;
 
     BinderHandle read_binder(ParcelHandle)
@@ -226,6 +227,12 @@ private class ServiceFake
     {
         ++read_count;
         return read_count == 1 ? 73 : 9;
+    }
+
+    void release_binder(BinderHandle binder)
+    {
+        assert(binder.valid);
+        ++target_releases;
     }
 
     ParcelHandle obtain_parcel()
@@ -278,6 +285,7 @@ private ServiceOps service_ops(ServiceFake fake)
     ServiceOps ops;
     ops.read_binder = &fake.read_binder;
     ops.read_int = &fake.read_int;
+    ops.release_binder = &fake.release_binder;
     ops.obtain_parcel = &fake.obtain_parcel;
     ops.append_remaining = &fake.append_remaining;
     ops.recycle_parcel = &fake.recycle_parcel;
@@ -343,6 +351,7 @@ unittest
     assert(fake.seen_flags == 9);
     assert(fake.restored);
     assert(fake.recycled);
+    assert(fake.target_releases == 1);
 }
 
 unittest
@@ -399,6 +408,7 @@ unittest
     assert(threw);
     assert(fake.restored);
     assert(fake.recycled);
+    assert(fake.target_releases == 1);
 }
 
 private class DeliveryFake
