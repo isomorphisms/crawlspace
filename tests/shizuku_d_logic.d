@@ -2,6 +2,7 @@ module shizuku_d_logic_test;
 
 import crawlspace.shizuku.android_boundary;
 import crawlspace.shizuku.applications;
+import crawlspace.shizuku.binder_sender;
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.permission;
@@ -1953,6 +1954,127 @@ unittest
     assert(fake.restores == 1);
     assert(fake.deletes == 1);
     assert(fake.transacted);
+}
+
+private class BinderSenderPermissionFake
+{
+    bool granted;
+    int checks;
+    AndroidUid last_uid;
+    AndroidPid last_pid;
+
+    bool manager_permission_granted(
+        AndroidUid uid,
+        AndroidPid pid)
+    {
+        ++checks;
+        last_uid = uid;
+        last_pid = pid;
+        return granted;
+    }
+}
+
+unittest
+{
+    BinderSenderState state;
+
+    assert(state.foreground_activities_changed(10, true));
+    assert(!state.foreground_activities_changed(10, true));
+    assert(!state.foreground_activities_changed(11, false));
+
+    state.process_died(10);
+    assert(!state.has_pid(10));
+    assert(state.process_state_changed(10));
+    assert(state.has_pid(10));
+
+    assert(state.uid_active(112_345));
+    assert(!state.uid_cached_changed(112_345, false));
+    state.uid_gone(112_345);
+    assert(!state.has_uid(112_345));
+
+    // An unseen idle UID still triggers upstream uidStarts().
+    assert(state.uid_idle(112_345));
+    assert(state.has_uid(112_345));
+}
+
+unittest
+{
+    auto api25 = uid_observer_registration(25);
+    assert(!api25.enabled);
+
+    auto api26 = uid_observer_registration(26);
+    assert(api26.enabled);
+    assert(api26.observe_gone);
+    assert(api26.observe_idle);
+    assert(api26.observe_active);
+    assert(!api26.observe_cached);
+
+    auto api27 = uid_observer_registration(27);
+    assert(api27.observe_cached);
+}
+
+unittest
+{
+    auto fake = new BinderSenderPermissionFake;
+
+    BinderSenderPackage manager;
+    manager.package_name = "managerish";
+    manager.declares_manager_permission = true;
+    manager.declares_client_permission = true;
+
+    BinderSenderPackage client;
+    client.package_name = "client";
+    client.declares_client_permission = true;
+
+    auto denied_manager_then_client = select_binder_delivery(
+        112_345,
+        77,
+        [manager, client],
+        &fake.manager_permission_granted);
+
+    // Denied manager branch does not fall through within the same package,
+    // but iteration continues to later packages.
+    assert(
+        denied_manager_then_client.kind ==
+        BinderDeliveryKind.client);
+    assert(
+        denied_manager_then_client.package_name ==
+        "client");
+    assert(fake.checks == 1);
+    assert(fake.last_uid == 112_345);
+    assert(fake.last_pid == 77);
+
+    fake.granted = true;
+    auto manager_result = select_binder_delivery(
+        112_345,
+        -1,
+        [manager, client],
+        &fake.manager_permission_granted);
+
+    assert(
+        manager_result.kind ==
+        BinderDeliveryKind.manager);
+    assert(manager_result.package_name == "managerish");
+    assert(manager_result.user_id == 1);
+    assert(fake.last_pid == -1);
+}
+
+unittest
+{
+    auto fake = new BinderSenderPermissionFake;
+
+    BinderSenderPackage both;
+    both.package_name = "both";
+    both.declares_manager_permission = true;
+    both.declares_client_permission = true;
+
+    auto result = select_binder_delivery(
+        112_345,
+        88,
+        [both],
+        &fake.manager_permission_granted);
+
+    assert(result.kind == BinderDeliveryKind.none);
 }
 
 void main()
