@@ -30,6 +30,7 @@ jobs:
             src/crawlspace/shizuku/clients.d \
             src/crawlspace/shizuku/config_reconcile.d \
             src/crawlspace/shizuku/service.d \
+            src/crawlspace/shizuku/server_lifecycle.d \
             src/crawlspace/shizuku/delivery.d \
             src/crawlspace/shizuku/permission.d \
             src/crawlspace/shizuku/permission_request.d \
