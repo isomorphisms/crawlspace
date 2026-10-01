@@ -23,6 +23,7 @@ struct TransactRemoteResult
 
 alias ReadBinder = BinderHandle delegate(ParcelHandle parcel);
 alias ReadInt = int delegate(ParcelHandle parcel);
+alias ReleaseBinder = void delegate(BinderHandle binder);
 alias ObtainParcel = ParcelHandle delegate();
 alias AppendRemaining = bool delegate(ParcelHandle source, ParcelHandle target);
 alias RecycleParcel = void delegate(ParcelHandle parcel);
@@ -39,6 +40,7 @@ struct ServiceOps
 {
     ReadBinder read_binder;
     ReadInt read_int;
+    ReleaseBinder release_binder;
     ObtainParcel obtain_parcel;
     AppendRemaining append_remaining;
     RecycleParcel recycle_parcel;
@@ -86,6 +88,15 @@ TransactRemoteResult transact_remote(
     }
 
     auto target = ops.read_binder(input);
+
+    if (target.valid && ops.release_binder !is null)
+    {
+        scope (exit)
+        {
+            ops.release_binder(target);
+        }
+    }
+
     auto target_code = cast(TransactionCode) ops.read_int(input);
     auto client = clients.find_client(client_key(caller));
     auto target_flags = target_flags_for_client(
