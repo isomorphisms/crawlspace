@@ -1,5 +1,8 @@
 name: shizuku-rish
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
@@ -36,6 +39,22 @@ jobs:
       - name: Test device provisioner
         shell: sh
         run: sh tests/shizuku_rish.sh
+      - name: Sync durable controlled bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/shizuku-provisioning'
+        shell: sh
+        run: |
+          rm -rf runtime/shizuku-rish
+          mkdir -p runtime/shizuku-rish
+          cp out/shizuku-rish/rish runtime/shizuku-rish/rish
+          cp out/shizuku-rish/rish_shizuku.dex runtime/shizuku-rish/rish_shizuku.dex
+          cp out/shizuku-rish/manifest.tsv runtime/shizuku-rish/manifest.tsv
+          git add runtime/shizuku-rish
+          if ! git diff --cached --quiet; then
+            git config user.name 'crawlspace-ci'
+            git config user.email 'crawlspace-ci@users.noreply.github.com'
+            git commit -m 'Record controlled Shizuku rish bundle'
+            git push origin HEAD:shizuku-provisioning
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: crawlspace-shizuku-rish

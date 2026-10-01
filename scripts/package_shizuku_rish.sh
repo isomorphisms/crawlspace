@@ -40,7 +40,7 @@ chmod 0400 "$output_dir/rish_shizuku.dex"
 
 rish_sha=$(sha256sum "$output_dir/rish" | awk '{print $1}')
 dex_sha=$(sha256sum "$output_dir/rish_shizuku.dex" | awk '{print $1}')
-crawlspace_commit=$(git -C "$repo_root" rev-parse HEAD)
+crawlspace_commit=$(git -C "$repo_root" log -1 --format=%H -- shizuku .gitmodules scripts/package_shizuku_rish.sh)
 
 {
     printf 'schema\tcrawlspace-shizuku-rish-v1\n'
