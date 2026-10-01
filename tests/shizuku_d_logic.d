@@ -6,6 +6,7 @@ import crawlspace.shizuku.binder_sender;
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.config_reconcile;
 import crawlspace.shizuku.delivery;
+import crawlspace.shizuku.framework_forwarding;
 import crawlspace.shizuku.permission;
 import crawlspace.shizuku.permission_request;
 import crawlspace.shizuku.rish;
@@ -2897,6 +2898,250 @@ unittest
     assert(
         failed.error ==
         UserServiceEntryError.platform_creation_failed);
+}
+
+private class FrameworkForwardingFake
+{
+    int obtains;
+    int native_wraps;
+    int native_deletes;
+    int recycles;
+    int local_deletes;
+    int binder_dec_strong_calls;
+    int transacts;
+    int clears;
+    int restores;
+    int append_start;
+    int append_size;
+
+    JavaObject parcel_obtain()
+    {
+        ++obtains;
+        return cast(JavaObject) 0x3000;
+    }
+
+    void* parcel_from_java(JavaObject parcel)
+    {
+        ++native_wraps;
+
+        if (parcel == cast(JavaObject) 0x1000)
+        {
+            return cast(void*) 0x1100;
+        }
+
+        if (parcel == cast(JavaObject) 0x2000)
+        {
+            return cast(void*) 0x2100;
+        }
+
+        if (parcel == cast(JavaObject) 0x3000)
+        {
+            return cast(void*) 0x3100;
+        }
+
+        return null;
+    }
+
+    void delete_native_parcel(void* parcel)
+    {
+        assert(parcel !is null);
+        ++native_deletes;
+    }
+
+    void parcel_recycle(JavaObject parcel)
+    {
+        assert(parcel == cast(JavaObject) 0x3000);
+        ++recycles;
+    }
+
+    void delete_local_reference(JavaObject object)
+    {
+        assert(
+            object == cast(JavaObject) 0x3000 ||
+            object == cast(JavaObject) 0x5000);
+        ++local_deletes;
+    }
+
+    bool read_strong_binder(
+        void* parcel,
+        out void* binder)
+    {
+        assert(parcel == cast(void*) 0x1100);
+        binder = cast(void*) 0x4000;
+        return true;
+    }
+
+    bool read_int32(
+        void* parcel,
+        out int value)
+    {
+        assert(parcel == cast(void*) 0x1100);
+        value = 91;
+        return true;
+    }
+
+    JavaObject binder_to_java(void* binder)
+    {
+        assert(binder == cast(void*) 0x4000);
+        return cast(JavaObject) 0x5000;
+    }
+
+    void binder_dec_strong(void* binder)
+    {
+        assert(binder == cast(void*) 0x4000);
+        ++binder_dec_strong_calls;
+    }
+
+    int parcel_position(void* parcel)
+    {
+        assert(parcel == cast(void*) 0x1100);
+        return 5;
+    }
+
+    int parcel_size(void* parcel)
+    {
+        assert(parcel == cast(void*) 0x1100);
+        return 12;
+    }
+
+    bool parcel_append(
+        void* source,
+        void* target,
+        int start,
+        int size)
+    {
+        assert(source == cast(void*) 0x1100);
+        assert(target == cast(void*) 0x3100);
+        append_start = start;
+        append_size = size;
+        return true;
+    }
+
+    bool binder_transact(
+        JavaObject target,
+        TransactionCode code,
+        JavaObject data,
+        JavaObject reply,
+        TransactionFlags flags)
+    {
+        assert(target == cast(JavaObject) 0x5000);
+        assert(code == 91);
+        assert(data == cast(JavaObject) 0x3000);
+        assert(reply == cast(JavaObject) 0x2000);
+        assert(flags == 6);
+        ++transacts;
+        return true;
+    }
+
+    ulong clear_calling_identity()
+    {
+        ++clears;
+        return 0xBEEF;
+    }
+
+    void restore_calling_identity(ulong identity)
+    {
+        assert(identity == 0xBEEF);
+        ++restores;
+    }
+}
+
+private FrameworkForwardingOps framework_forwarding_ops(
+    FrameworkForwardingFake fake)
+{
+    FrameworkForwardingOps ops;
+    ops.parcel_obtain = &fake.parcel_obtain;
+    ops.parcel_from_java = &fake.parcel_from_java;
+    ops.delete_native_parcel = &fake.delete_native_parcel;
+    ops.parcel_recycle = &fake.parcel_recycle;
+    ops.delete_local_reference =
+        &fake.delete_local_reference;
+    ops.read_strong_binder =
+        &fake.read_strong_binder;
+    ops.read_int32 = &fake.read_int32;
+    ops.binder_to_java = &fake.binder_to_java;
+    ops.binder_dec_strong = &fake.binder_dec_strong;
+    ops.parcel_position = &fake.parcel_position;
+    ops.parcel_size = &fake.parcel_size;
+    ops.parcel_append = &fake.parcel_append;
+    ops.binder_transact = &fake.binder_transact;
+    ops.clear_calling_identity =
+        &fake.clear_calling_identity;
+    ops.restore_calling_identity =
+        &fake.restore_calling_identity;
+    return ops;
+}
+
+unittest
+{
+    auto fake = new FrameworkForwardingFake;
+    auto ops = framework_forwarding_ops(fake);
+
+    auto borrowed = borrow_framework_transaction(
+        cast(JavaObject) 0x1000,
+        cast(JavaObject) 0x2000,
+        ops);
+
+    assert(borrowed.valid);
+    assert(
+        borrowed.input.raw ==
+        cast(void*) 0x1100);
+    assert(
+        borrowed.input.framework_raw ==
+        cast(void*) 0x1000);
+    assert(
+        borrowed.reply.raw ==
+        cast(void*) 0x2100);
+
+    auto transparent =
+        build_framework_transparent_bridge(ops);
+    auto identity =
+        build_framework_identity_bridge(ops);
+    auto adapter =
+        build_android_service_adapter(
+            transparent,
+            identity);
+
+    assert(adapter.ready);
+
+    ClientRegistry clients;
+    auto result = transact_remote(
+        clients,
+        BinderCaller(2_000, 501),
+        2_000,
+        50_000,
+        null,
+        borrowed.input,
+        borrowed.reply,
+        6,
+        adapter.service_ops);
+
+    assert(result.ok);
+    assert(result.target_accepted);
+    assert(fake.obtains == 1);
+    assert(fake.append_start == 5);
+    assert(fake.append_size == 7);
+    assert(fake.transacts == 1);
+    assert(fake.clears == 1);
+    assert(fake.restores == 1);
+    assert(fake.binder_dec_strong_calls == 1);
+
+    // Owned temporary: native wrapper + Parcel.recycle + local JNI ref.
+    assert(fake.recycles == 1);
+
+    // Target Java Binder + temporary Java Parcel local refs.
+    assert(fake.local_deletes == 2);
+
+    release_borrowed_framework_transaction(
+        borrowed,
+        ops);
+
+    // Temporary wrapper plus borrowed input/reply wrappers.
+    assert(fake.native_deletes == 3);
+
+    // Borrowed Java input/reply objects are not recycled or local-ref deleted.
+    assert(fake.recycles == 1);
+    assert(fake.local_deletes == 2);
 }
 
 void main()
