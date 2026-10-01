@@ -39,6 +39,9 @@ jobs:
       - name: Test device provisioner
         shell: sh
         run: sh tests/shizuku_rish.sh
+      - name: Test Shizuku runtime identity report
+        shell: sh
+        run: sh tests/shizuku_runtime_identity.sh
       - name: Sync durable controlled bundle
         if: github.event_name == 'push' && github.ref == 'refs/heads/shizuku-provisioning'
         shell: sh
