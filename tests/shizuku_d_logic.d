@@ -10,6 +10,7 @@ import crawlspace.shizuku.permission;
 import crawlspace.shizuku.permission_request;
 import crawlspace.shizuku.rish;
 import crawlspace.shizuku.rish_client;
+import crawlspace.shizuku.remote_process;
 import crawlspace.shizuku.service;
 import crawlspace.shizuku.server_lifecycle;
 import crawlspace.shizuku.startup;
@@ -2527,6 +2528,216 @@ unittest
         removed.action ==
         UserServiceApkAction.remove_record);
     assert(watches.length == 0);
+}
+
+private class RemoteProcessFake
+{
+    int spawns;
+    int links;
+    int destroys;
+    int output_stream_calls;
+    int input_stream_calls;
+    int error_stream_calls;
+    int pipe_to_calls;
+    int pipe_from_calls;
+    int clock_calls;
+    int sleeps;
+    bool alive = true;
+
+    ProcessHandle spawn_process(RemoteProcessSpec spec)
+    {
+        ++spawns;
+        assert(spec.command.length != 0);
+        return ProcessHandle(cast(void*) 0x1000);
+    }
+
+    bool link_owner_death(
+        BinderHandle token,
+        ulong generation)
+    {
+        ++links;
+        assert(token.valid);
+        assert(generation != 0);
+        return false; // nonfatal upstream
+    }
+
+    bool process_alive(ProcessHandle)
+    {
+        return alive;
+    }
+
+    void destroy_process(ProcessHandle)
+    {
+        ++destroys;
+        alive = false;
+    }
+
+    int wait_for(ProcessHandle)
+    {
+        return 9;
+    }
+
+    int exit_value(ProcessHandle)
+    {
+        return 9;
+    }
+
+    StreamHandle output_stream(ProcessHandle)
+    {
+        ++output_stream_calls;
+        return StreamHandle(cast(void*) 0x2000);
+    }
+
+    StreamHandle input_stream(ProcessHandle)
+    {
+        ++input_stream_calls;
+        return StreamHandle(cast(void*) 0x3000);
+    }
+
+    StreamHandle error_stream(ProcessHandle)
+    {
+        ++error_stream_calls;
+        return StreamHandle(cast(void*) 0x4000);
+    }
+
+    PipeHandle pipe_to_stream(StreamHandle)
+    {
+        ++pipe_to_calls;
+        return PipeHandle(40);
+    }
+
+    PipeHandle pipe_from_stream(StreamHandle stream)
+    {
+        ++pipe_from_calls;
+        return stream.raw == cast(void*) 0x3000
+            ? PipeHandle(41)
+            : PipeHandle(42 + pipe_from_calls);
+    }
+
+    ulong monotonic_nanoseconds()
+    {
+        ++clock_calls;
+
+        if (clock_calls == 1)
+        {
+            return 1_000_000_000UL;
+        }
+
+        if (clock_calls == 2)
+        {
+            return 1_050_000_000UL;
+        }
+
+        alive = false;
+        return 1_100_000_000UL;
+    }
+
+    void sleep_milliseconds(uint milliseconds)
+    {
+        ++sleeps;
+        assert(milliseconds <= 100);
+    }
+}
+
+private RemoteProcessOps remote_process_ops(RemoteProcessFake fake)
+{
+    RemoteProcessOps ops;
+    ops.spawn_process = &fake.spawn_process;
+    ops.link_owner_death = &fake.link_owner_death;
+    ops.process_alive = &fake.process_alive;
+    ops.destroy_process = &fake.destroy_process;
+    ops.wait_for = &fake.wait_for;
+    ops.exit_value = &fake.exit_value;
+    ops.output_stream = &fake.output_stream;
+    ops.input_stream = &fake.input_stream;
+    ops.error_stream = &fake.error_stream;
+    ops.pipe_from_stream = &fake.pipe_from_stream;
+    ops.pipe_to_stream = &fake.pipe_to_stream;
+    ops.monotonic_nanoseconds =
+        &fake.monotonic_nanoseconds;
+    ops.sleep_milliseconds = &fake.sleep_milliseconds;
+    return ops;
+}
+
+unittest
+{
+    RemoteProcessRegistry processes;
+    auto fake = new RemoteProcessFake;
+    auto ops = remote_process_ops(fake);
+
+    RemoteProcessSpec spec;
+    spec.command = ["/system/bin/id"];
+    spec.environment = ["A=B"];
+    spec.directory = "/";
+
+    auto created = processes.create(
+        spec,
+        binder_handle(900),
+        ops);
+
+    assert(created.created);
+    assert(processes.length == 1);
+    assert(fake.spawns == 1);
+    assert(fake.links == 1);
+
+    auto out1 = processes.get_output_stream(
+        created.generation,
+        ops);
+    auto out2 = processes.get_output_stream(
+        created.generation,
+        ops);
+
+    assert(out1.fd == 40);
+    assert(out2.fd == 40);
+    assert(fake.output_stream_calls == 1);
+    assert(fake.pipe_to_calls == 1);
+
+    auto in1 = processes.get_input_stream(
+        created.generation,
+        ops);
+    auto in2 = processes.get_input_stream(
+        created.generation,
+        ops);
+
+    assert(in1.fd == 41);
+    assert(in2.fd == 41);
+    assert(fake.input_stream_calls == 1);
+
+    auto err1 = processes.get_error_stream(
+        created.generation,
+        ops);
+    auto err2 = processes.get_error_stream(
+        created.generation,
+        ops);
+
+    assert(err1.valid);
+    assert(err2.valid);
+    assert(fake.error_stream_calls == 2);
+
+    assert(processes.owner_died(
+        created.generation,
+        ops));
+    assert(fake.destroys == 1);
+
+    // A second owner-death callback sees the process already dead.
+    assert(processes.owner_died(
+        created.generation,
+        ops));
+    assert(fake.destroys == 1);
+}
+
+unittest
+{
+    auto fake = new RemoteProcessFake;
+    auto ops = remote_process_ops(fake);
+
+    auto completed = wait_for_timeout(
+        ProcessHandle(cast(void*) 0x1000),
+        200_000_000UL,
+        ops);
+
+    assert(completed);
+    assert(fake.sleeps >= 1);
 }
 
 void main()
