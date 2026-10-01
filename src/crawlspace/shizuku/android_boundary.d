@@ -29,6 +29,8 @@ alias AndroidReadStrongBinder =
     bool delegate(ParcelHandle parcel, out BinderHandle binder);
 alias AndroidReadInt32 =
     bool delegate(ParcelHandle parcel, out int value);
+alias AndroidReleaseBinder =
+    void delegate(BinderHandle binder);
 
 alias AndroidCreateParcel = ParcelHandle delegate();
 alias AndroidDeleteParcel = void delegate(ParcelHandle parcel);
@@ -69,6 +71,7 @@ struct TransparentBinderBridge
 {
     AndroidReadStrongBinder read_strong_binder;
     AndroidReadInt32 read_int32;
+    AndroidReleaseBinder release_binder;
     AndroidCreateParcel create_parcel;
     AndroidDeleteParcel delete_parcel;
     AndroidParcelPosition parcel_position;
@@ -80,6 +83,7 @@ struct TransparentBinderBridge
     {
         return read_strong_binder !is null &&
             read_int32 !is null &&
+            release_binder !is null &&
             create_parcel !is null &&
             delete_parcel !is null &&
             parcel_position !is null &&
@@ -211,6 +215,8 @@ AndroidServiceAdapter build_android_service_adapter(
 
     result.service_ops.read_binder = &read_binder;
     result.service_ops.read_int = &read_int;
+    result.service_ops.release_binder =
+        bridge.release_binder;
     result.service_ops.obtain_parcel = &obtain_parcel;
     result.service_ops.append_remaining = &append_remaining;
     result.service_ops.recycle_parcel = &recycle_parcel;
