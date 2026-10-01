@@ -53,6 +53,18 @@ alias FrameworkClearCallingIdentity =
     ulong delegate();
 alias FrameworkRestoreCallingIdentity =
     void delegate(ulong identity);
+alias FrameworkExceptionPending =
+    bool delegate();
+alias FrameworkRethrowPendingException =
+    void delegate();
+
+class FrameworkPendingJavaException : Exception
+{
+    this()
+    {
+        super("Java framework call raised an exception");
+    }
+}
 
 struct FrameworkForwardingOps
 {
@@ -75,6 +87,8 @@ struct FrameworkForwardingOps
 
     FrameworkClearCallingIdentity clear_calling_identity;
     FrameworkRestoreCallingIdentity restore_calling_identity;
+    FrameworkExceptionPending exception_pending;
+    FrameworkRethrowPendingException rethrow_pending_exception;
 
     bool complete() const nothrow @nogc
     {
@@ -92,7 +106,9 @@ struct FrameworkForwardingOps
             parcel_append !is null &&
             binder_transact !is null &&
             clear_calling_identity !is null &&
-            restore_calling_identity !is null;
+            restore_calling_identity !is null &&
+            exception_pending !is null &&
+            rethrow_pending_exception !is null;
     }
 }
 
@@ -350,12 +366,24 @@ TransparentBinderBridge build_framework_transparent_bridge(
             return false;
         }
 
-        return ops.binder_transact(
+        auto accepted = ops.binder_transact(
             target.framework_raw,
             code,
             data.framework_raw,
             reply.framework_raw,
             flags);
+
+        /*
+         * The JNI shim captures and clears a Java exception rather than
+         * leaving it pending. Throw a D marker now so transact_remote's
+         * scope-exit cleanup runs before the JNI entrypoint rethrows it.
+         */
+        if (ops.exception_pending())
+        {
+            throw new FrameworkPendingJavaException;
+        }
+
+        return accepted;
     }
 
     bridge.read_strong_binder = &read_strong_binder;
@@ -377,14 +405,52 @@ BinderIdentityBridge build_framework_identity_bridge(
     BinderIdentityBridge bridge;
 
     if (ops.clear_calling_identity is null ||
-        ops.restore_calling_identity is null)
+        ops.restore_calling_identity is null ||
+        ops.exception_pending is null)
     {
         return bridge;
     }
 
+    ulong clear_identity()
+    {
+        auto identity =
+            ops.clear_calling_identity();
+
+        if (ops.exception_pending())
+        {
+            throw new FrameworkPendingJavaException;
+        }
+
+        return identity;
+    }
+
+    void restore_identity(ulong identity)
+    {
+        ops.restore_calling_identity(identity);
+
+        if (ops.exception_pending())
+        {
+            throw new FrameworkPendingJavaException;
+        }
+    }
+
     bridge.clear_calling_identity =
-        ops.clear_calling_identity;
+        &clear_identity;
     bridge.restore_calling_identity =
-        ops.restore_calling_identity;
+        &restore_identity;
     return bridge;
+}
+
+bool rethrow_pending_framework_exception(
+    FrameworkForwardingOps ops)
+{
+    if (ops.exception_pending is null ||
+        ops.rethrow_pending_exception is null ||
+        !ops.exception_pending())
+    {
+        return false;
+    }
+
+    ops.rethrow_pending_exception();
+    return true;
 }
