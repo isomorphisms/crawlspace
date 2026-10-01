@@ -1,5 +1,6 @@
 module shizuku_d_logic_test;
 
+import crawlspace.shizuku.applications;
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.permission;
@@ -1606,6 +1607,148 @@ unittest
 
     assert(server_version_for_attached_client(-1, 13) == 12);
     assert(server_version_for_attached_client(13, 13) == 13);
+}
+
+private InstalledApplication installed_application(
+    string package_name,
+    AndroidUid uid,
+    int user_id,
+    bool permission,
+    bool v3)
+{
+    InstalledApplication app;
+    app.package_name = package_name;
+    app.uid = uid;
+    app.user_id = user_id;
+    app.has_application_info = true;
+    app.declares_shizuku_permission = permission;
+    app.supports_v3 = v3;
+    return app;
+}
+
+unittest
+{
+    ConfigStore config;
+
+    auto v3 = installed_application(
+        "example.v3",
+        112_345,
+        1,
+        true,
+        true);
+
+    assert(application_visible_to_manager(config, v3));
+
+    auto old = installed_application(
+        "example.old",
+        112_346,
+        1,
+        true,
+        false);
+
+    assert(!application_visible_to_manager(config, old));
+
+    config.update(
+        112_346,
+        ["example.old"],
+        mask_permission,
+        flag_denied);
+
+    assert(application_visible_to_manager(config, old));
+}
+
+unittest
+{
+    ConfigStore config;
+    config.update(
+        112_400,
+        ["example.allowed"],
+        mask_permission,
+        flag_allowed);
+
+    auto allowed = installed_application(
+        "example.allowed",
+        112_400,
+        1,
+        false,
+        false);
+
+    auto sibling = installed_application(
+        "example.sibling",
+        112_400,
+        1,
+        true,
+        true);
+
+    assert(application_visible_to_manager(config, allowed));
+    assert(!application_visible_to_manager(config, sibling));
+}
+
+unittest
+{
+    ConfigStore config;
+
+    auto manager = installed_application(
+        shizuku_manager_package,
+        100_000,
+        1,
+        true,
+        true);
+
+    auto user_one = installed_application(
+        "example.one",
+        112_500,
+        1,
+        true,
+        true);
+
+    auto user_two = installed_application(
+        "example.two",
+        212_500,
+        2,
+        true,
+        true);
+
+    auto visible = visible_applications(
+        config,
+        [manager, user_one, user_two],
+        -1);
+
+    assert(visible.length == 2);
+
+    auto one_only = visible_applications(
+        config,
+        [manager, user_one, user_two],
+        1);
+
+    assert(one_only.length == 1);
+    assert(one_only[0].package_name == "example.one");
+}
+
+unittest
+{
+    auto permission_only = installed_application(
+        "example.permission-only",
+        112_600,
+        1,
+        true,
+        false);
+
+    auto no_permission = installed_application(
+        "example.no-permission",
+        112_601,
+        1,
+        false,
+        true);
+
+    auto targets = binder_delivery_targets(
+        [permission_only, no_permission],
+        1);
+
+    assert(targets.length == 1);
+    assert(
+        targets[0].package_name ==
+        "example.permission-only");
 }
 
 void main()
