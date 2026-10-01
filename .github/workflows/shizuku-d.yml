@@ -28,6 +28,7 @@ jobs:
             src/crawlspace/shizuku/applications.d \
             src/crawlspace/shizuku/binder_sender.d \
             src/crawlspace/shizuku/clients.d \
+            src/crawlspace/shizuku/config_reconcile.d \
             src/crawlspace/shizuku/service.d \
             src/crawlspace/shizuku/delivery.d \
             src/crawlspace/shizuku/permission.d \
