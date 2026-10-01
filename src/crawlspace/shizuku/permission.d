@@ -127,6 +127,32 @@ public:
         return false;
     }
 
+    ConfigEntry[] snapshot() const
+    {
+        ConfigEntry[] result;
+        foreach (entry; entries)
+        {
+            ConfigEntry copy = entry;
+            copy.packages = entry.packages.dup;
+            result ~= copy;
+        }
+        return result;
+    }
+
+    bool replace_packages(
+        AndroidUid uid,
+        string[] packages)
+    {
+        auto entry = find(uid);
+        if (entry is null)
+        {
+            return false;
+        }
+
+        entry.packages = packages.dup;
+        return true;
+    }
+
     size_t length() const nothrow @nogc
     {
         return entries.length;
