@@ -1857,11 +1857,17 @@ private class AndroidBoundaryFake
     }
 }
 
-private PublicNdkBinderOps public_ndk_ops(AndroidBoundaryFake fake)
+private StableNdkCallerOps stable_ndk_caller_ops(AndroidBoundaryFake fake)
 {
-    PublicNdkBinderOps ops;
+    StableNdkCallerOps ops;
     ops.calling_uid = &fake.calling_uid;
     ops.calling_pid = &fake.calling_pid;
+    return ops;
+}
+
+private TransparentBinderBridge transparent_bridge(AndroidBoundaryFake fake)
+{
+    TransparentBinderBridge ops;
     ops.read_strong_binder = &fake.read_strong_binder;
     ops.read_int32 = &fake.read_int32;
     ops.create_parcel = &fake.create_parcel;
@@ -1883,7 +1889,7 @@ private BinderIdentityBridge identity_bridge(AndroidBoundaryFake fake)
 
 unittest
 {
-    PublicNdkBinderOps incomplete;
+    TransparentBinderBridge incomplete;
     BinderIdentityBridge identity;
 
     auto result = build_android_service_adapter(
@@ -1893,17 +1899,17 @@ unittest
     assert(!result.ready);
     assert(
         result.error ==
-        AndroidBoundaryError.incomplete_public_ndk);
+        AndroidBoundaryError.incomplete_transparent_bridge);
 }
 
 unittest
 {
     auto fake = new AndroidBoundaryFake;
-    auto ndk = public_ndk_ops(fake);
+    auto bridge = transparent_bridge(fake);
     BinderIdentityBridge missing_identity;
 
     auto result = build_android_service_adapter(
-        ndk,
+        bridge,
         missing_identity);
 
     assert(!result.ready);
@@ -1916,12 +1922,12 @@ unittest
 {
     auto fake = new AndroidBoundaryFake;
     auto adapter = build_android_service_adapter(
-        public_ndk_ops(fake),
+        transparent_bridge(fake),
         identity_bridge(fake));
 
     assert(adapter.ready);
 
-    auto caller = binder_caller(public_ndk_ops(fake));
+    auto caller = binder_caller(stable_ndk_caller_ops(fake));
     assert(caller.uid == 2_000);
     assert(caller.pid == 444);
 
