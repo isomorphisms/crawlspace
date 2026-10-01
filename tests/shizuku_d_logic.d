@@ -16,6 +16,7 @@ import crawlspace.shizuku.startup;
 import crawlspace.shizuku.transaction_router;
 import crawlspace.shizuku.types;
 import crawlspace.shizuku.user_service;
+import crawlspace.shizuku.user_service_apk;
 
 private BinderHandle binder_handle(size_t value)
 {
@@ -2454,6 +2455,78 @@ unittest
     assert(delivery.length == 2);
     assert(delivery[0] == InitialBinderDelivery.clients);
     assert(delivery[1] == InitialBinderDelivery.manager);
+}
+
+unittest
+{
+    PackageInstallation missing;
+    missing.user_id = 0;
+
+    PackageInstallation user10;
+    user10.user_id = 10;
+    user10.package_present = true;
+    user10.source_dir = "/data/app/user10/base.apk";
+
+    PackageInstallation user0;
+    user0.user_id = 0;
+    user0.package_present = true;
+    user0.source_dir = "/data/app/user0/base.apk";
+
+    auto retarget = user_service_apk_changed(
+        [missing, user10, user0]);
+
+    assert(
+        retarget.action ==
+        UserServiceApkAction.retarget_observer);
+    assert(
+        retarget.new_source_dir ==
+        "/data/app/user10/base.apk");
+
+    auto remove = user_service_apk_changed([missing]);
+    assert(
+        remove.action ==
+        UserServiceApkAction.remove_record);
+}
+
+unittest
+{
+    UserServiceApkWatchRegistry watches;
+    UserServiceIdentity service =
+        UserServiceIdentity(44, "token-44");
+
+    watches.record_created(
+        service,
+        "example.client",
+        "/data/app/old/base.apk");
+
+    assert(watches.length == 1);
+
+    PackageInstallation upgraded;
+    upgraded.user_id = 0;
+    upgraded.package_present = true;
+    upgraded.source_dir =
+        "/data/app/new/base.apk";
+
+    auto decision = watches.apk_changed(
+        service,
+        [upgraded]);
+
+    assert(
+        decision.action ==
+        UserServiceApkAction.retarget_observer);
+    assert(
+        watches.find(service).source_dir ==
+        "/data/app/new/base.apk");
+
+    PackageInstallation gone;
+    auto removed = watches.apk_changed(
+        service,
+        [gone]);
+
+    assert(
+        removed.action ==
+        UserServiceApkAction.remove_record);
+    assert(watches.length == 0);
 }
 
 void main()
