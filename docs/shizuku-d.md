@@ -12,97 +12,144 @@ The Idriç files on the parent `shizuku` branch remain useful as a semantic map.
 The files under `src/crawlspace/shizuku/` are the executable-language
 translation.
 
-## Implemented D slice
+## Current D inventory
 
-### `types.d`
+### Core Binder/client policy
 
-Shared Shizuku-facing types:
+- `types.d` — Android UID/PID, caller identity, Binder/Parcel handles and
+  shared transaction types.
+- `clients.d` — attach, package/UID proof, initial permission state,
+  exact-record Binder-death cleanup, and caller authorization.
+- `service.d` — `transactRemote`, including API-13 flag placement, opaque
+  payload copying and cleanup-safe identity restoration.
+- `transaction_router.d` — private transaction 10001, remote transact,
+  legacy attach code 14, rish codes 30000–30002, and the legacy version-12
+  compatibility reply.
 
-- Android UID/PID;
-- Binder caller identity;
-- client keys;
-- Binder/Parcel opaque handles;
-- API and transaction types;
-- Android app-id/user-id decomposition.
+The D registry uses generation tokens for client and service identities so a
+late death callback cannot delete a newer registration that reused the same
+UID/PID or logical key.
 
-### `clients.d`
+### Binder delivery and activation
 
-Translation of the important `ClientManager`, `ClientRecord`, and
-`ShizukuService.attachApplication` policy:
+- `delivery.d` — temporary idle exemption, `<package>.shizuku` provider
+  acquisition, liveness check, one force-stop/retry, Binder delivery, and
+  unconditional provider release.
+- `binder_sender.d` — process/UID observer deduplication and the exact
+  manager-permission-before-client-permission package ordering.
+- `applications.d` — manager application filtering and initial client Binder
+  delivery target selection.
 
-- prove the requested package belongs to Binder's calling UID before attach;
-- do not create a second record for an already attached UID/PID;
-- initialize `allowed` from persistent configuration;
-- link callback Binder death before publishing a new client;
-- remove by exact registration identity rather than merely UID/PID;
-- preserve Shizuku's permission ordering;
-- allow the runtime Shizuku permission to bypass attachment only when no client
-  record exists.
+### Permission and configuration policy
 
-The D registry uses a monotonically increasing generation in `ClientToken`.
-That corresponds to the Java death-recipient closure capturing one exact
-`ClientRecord`: a delayed death callback from an old registration cannot
-delete a newer process record with the same UID/PID.
+- `permission.d` — allowed/denied bitmask semantics, live-client propagation,
+  runtime permission grant/revoke behavior, and `getFlagsForUid` fallback.
+- `permission_request.d` — `checkSelfPermission`, request/rationale state,
+  immediate grant/deny behavior, and work-profile manager routing.
+- `config_reconcile.d` — persisted UID/package validation, package-list
+  deduplication, runtime-permission import, and Android-version-specific
+  delayed-write scheduling.
 
-### `service.d`
+The translation preserves two non-obvious upstream behaviors:
 
-Translation of `Service.transactRemote`:
+1. unchanged config flags return before adding new package names;
+2. a persisted entry with an empty package list is removed during startup
+   reconciliation even when the UID still exists.
 
-1. authorize the Binder caller;
-2. read target Binder and transaction code;
-3. for attached API >= 13 clients, read target flags from the forwarded payload;
-   older/unattached callers use the outer Binder flags;
-4. obtain a fresh Parcel and append the unread input bytes;
-5. clear Binder calling identity;
-6. transact on the target Binder;
-7. restore calling identity;
-8. recycle the temporary Parcel.
+### User services
 
-The D implementation deliberately uses `scope(exit)` for both identity
-restoration and Parcel recycling. The pinned Java source recycles in `finally`
-but places `restoreCallingIdentity` before the `finally`; an exception from
-the target transaction can therefore skip restoration. Crawl Space treats
-identity restoration as part of the capability boundary and makes it
-cleanup-safe.
+- `user_service.d` — record creation/reuse/replacement, `noCreate`
+  compatibility, daemon behavior, token attachment, death handling and
+  connection cleanup.
+- `user_service_apk.d` — package-upgrade observer retargeting and record
+  removal when no installation remains.
+- `user_service_entry.d` — ServiceStarter argument parsing, Android-user
+  selection, process naming, and Context-constructor-before-no-arg constructor
+  policy.
+- `startup.d` — structured server and user-service `app_process` launch
+  construction plus root/shell starter policy.
 
-### `user_service.d`
+### Server lifecycle
 
-Translation of the reusable `UserServiceManager` / `UserServiceRecord`
-state machine:
+- `server_lifecycle.d` — required system-service wait order, manager presence,
+  manager APK removal exit behavior, BinderSender registration and initial
+  client-before-manager Binder fan-out.
+- `startup.d` — accepted launch UIDs, root cgroup/mount-namespace preparation,
+  SELinux Binder call/transfer preflight, old-server replacement, APK selection
+  and detached launch.
 
-- package ownership is checked against the caller app-id and Android user;
-- service identity is package plus tag, or package plus class when no tag is
-  supplied;
-- `noCreate` preserves the API-version-specific return convention;
-- a version mismatch replaces the existing record;
-- a dead non-starting Binder replaces the existing record;
-- a live or still-starting record is reused;
-- daemon mode can change on a reused record;
-- starting is recorded before the external process-start operation is queued;
-- attachment is by the generated service token;
-- Binder death removes that exact service record;
-- non-daemon records are removed when the final connection disappears;
-- destruction unlinks Binder death and sends the destroy operation only to a
-  still-live Binder.
+### rish
 
-Process construction, the 30-second Android handler timeout, and the concrete
-Binder destroy transaction remain Android-boundary operations.
+- `rish.d` — server-side host registry keyed by calling PID, TTY handling,
+  window-size/exit-code transactions and environment-preservation rules.
+- `rish_client.d` — server-version gate, permission flow, shared-UID terminal
+  package selection and Android 8 binder-request fallback.
+
+The shell-user environment rule is preserved exactly: root preserves the caller
+environment by default, shell strips it by default, and the first
+`RISH_PRESERVE_ENV=1` or `=0` entry overrides that default.
+
+### Deprecated remote-process API
+
+- `remote_process.d` — child creation, owner Binder-death destruction, cached
+  stdin/stdout pipe bridges, uncached stderr bridge and timeout polling.
+
+This path is included for fidelity even though upstream Shizuku documents
+`newProcess` as planned for removal in favor of UserService.
+
+## Deliberate semantic correction
+
+The pinned Java `Service.transactRemote` restores Binder calling identity after
+the target transaction but not from its `finally` block. A target exception can
+therefore skip restoration.
+
+The D translation treats identity restoration as a capability invariant and
+uses cleanup semantics so restoration occurs on both success and failure.
 
 ## Android boundary
 
-These files contain Shizuku logic, not another private Binder implementation.
-The concrete Android operations should be supplied by the D Android seam in
-`dilapidated-shed/ick:dmd-shizuku-android-touchpoints`.
+`android_boundary.d` makes the remaining platform boundary explicit.
 
-That branch already defines D declarations for Binder, Parcel, Binder death,
-transactions, JNI Binder conversion, status handling, and Android logging.
+Stable `libbinder_ndk` is useful for caller UID/PID, Binder liveness/death and
+many Parcel primitives. It is not a drop-in implementation of Shizuku's
+transparent forwarding path:
 
-The next translation slices in Crawl Space are:
+- `AIBinder_transact` requires an input Parcel created by
+  `AIBinder_prepareTransaction`;
+- `AIBinder_prepareTransaction` requires the target Binder to be associated
+  with an NDK Binder class;
+- Shizuku accepts an arbitrary target Binder and forwards the remaining opaque
+  Parcel bytes;
+- stable NDK exposes no equivalent of Java Binder
+  `clearCallingIdentity()` / `restoreCallingIdentity()`.
 
-- Binder-delivery / ContentProvider retry policy;
-- permission-result/config propagation;
-- permission-result/config propagation;
-- process startup and server lifecycle;
-- the rish service-facing logic.
+Accordingly the D adapter refuses to construct a forwarding path unless a
+`TransparentBinderBridge` and `BinderIdentityBridge` are explicitly supplied.
+Those should be implemented by a narrow Java/framework JNI bridge or an
+equivalent platform-libbinder bridge. A partial NDK adapter must not silently
+change authority semantics.
 
-Compiler/ABI qualification belongs in Ick; Shizuku policy remains here.
+Generic Android declarations remain in
+`dilapidated-shed/ick:dmd-shizuku-android-touchpoints`. That branch now also
+declares public Parcel position/size operations needed around the transparent
+bridge.
+
+## Acceptance status
+
+`.github/workflows/shizuku-d.yml` compiles the complete translated policy set
+with DMD and runs `tests/shizuku_d_logic.d` on the host.
+
+Host acceptance proves the Shizuku state machines and compatibility rules; it
+does **not** yet prove an Android-native runnable Shizuku replacement.
+
+The remaining work is primarily:
+
+1. implement the transparent Binder/identity Android bridge;
+2. bind ContentProvider, PackageManager/PermissionManager, observer, Bundle /
+   Intent and process operations to the D seams;
+3. qualify the required external calls/relocations in Ick's Android DMD path;
+4. run device acceptance on the MIRO A1, beginning with one harmless forwarded
+   system-service transaction and Binder-death cleanup.
+
+Compiler/ABI qualification belongs in Ick; Shizuku-specific policy remains in
+Crawl Space.
