@@ -2,6 +2,7 @@ module crawlspace.shizuku.startup;
 
 import crawlspace.shizuku.types;
 import crawlspace.shizuku.user_service;
+import std.conv : to;
 
 enum LaunchAuthority : ubyte
 {
@@ -214,7 +215,7 @@ ProcessLaunch build_user_service_launch(
     launch.arguments ~= "--token=" ~ request.identity.token;
     launch.arguments ~= "--package=" ~ request.package_name;
     launch.arguments ~= "--class=" ~ request.class_name;
-    launch.arguments ~= "--uid=" ~ request.calling_uid.stringof;
+    launch.arguments ~= "--uid=" ~ to!string(request.calling_uid);
 
     if (request.debuggable)
     {
