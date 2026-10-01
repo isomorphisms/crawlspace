@@ -29,6 +29,7 @@ jobs:
             src/crawlspace/shizuku/delivery.d \
             src/crawlspace/shizuku/permission.d \
             src/crawlspace/shizuku/rish.d \
+            src/crawlspace/shizuku/rish_client.d \
             src/crawlspace/shizuku/user_service.d \
             src/crawlspace/shizuku/startup.d \
             -of=/tmp/shizuku_d_logic
