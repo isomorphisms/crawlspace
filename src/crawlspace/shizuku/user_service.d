@@ -32,7 +32,7 @@ struct UserServiceOptions
 
     string process_name_suffix;
     bool use_32_bit_app_process;
-    bool debug;
+    bool debuggable;
 }
 
 struct StartRequest
@@ -44,7 +44,7 @@ struct StartRequest
     string process_name_suffix;
     AndroidUid calling_uid;
     bool use_32_bit_app_process;
-    bool debug;
+    bool debuggable;
 }
 
 struct UserServiceRecord
@@ -411,7 +411,7 @@ AddUserServiceResult add_user_service(
             request.calling_uid = calling_uid;
             request.use_32_bit_app_process =
                 options.use_32_bit_app_process;
-            request.debug = options.debug;
+            request.debuggable = options.debuggable;
             ops.schedule_start(request);
         }
 
