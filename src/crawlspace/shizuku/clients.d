@@ -103,6 +103,19 @@ public:
         return &records[i];
     }
 
+    ClientRecord*[] find_clients(AndroidUid uid)
+    {
+        ClientRecord*[] result;
+        foreach (ref record; records)
+        {
+            if (record.token.key.uid == uid)
+            {
+                result ~= &record;
+            }
+        }
+        return result;
+    }
+
     bool remove_exact(ClientToken token)
     {
         foreach (i, ref record; records)
