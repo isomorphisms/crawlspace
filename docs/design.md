@@ -91,3 +91,11 @@ own operation identity, separate stdout/stderr, bounded retained output, explici
 caller-loss semantics, and independent result reopening. Those meanings belong
 to IB; Crawl Space should provide the mechanism without inventing IB's task
 model.
+
+
+The physical acceptance harness keeps the destructive step opt-in. Its default
+mode checks concurrent control without stopping the daemon. The
+`--kill-listener` mode deliberately stops the listener and verifies that an
+already accepted command can finish while the endpoint is gone. It does not
+claim retained-result semantics; IB still owns the distinction between a live
+command response and independently reopenable durable information.

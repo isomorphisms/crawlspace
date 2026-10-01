@@ -23,6 +23,10 @@ jobs:
         # Root is the host-test analogue of the accepted Android root/shell IDs.
         run: sudo make test
 
+      - name: Check Longview acceptance harness syntax
+        shell: sh
+        run: sh -n scripts/longview_control_acceptance.sh
+
   android:
     runs-on: ubuntu-latest
     steps:
