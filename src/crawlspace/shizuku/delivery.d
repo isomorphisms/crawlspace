@@ -69,8 +69,8 @@ DeliveryResult deliver_broker_binder(
         ops.temp_whitelist(package_name, user_id, 30_000);
     }
 
-    const provider_name = package_name ~ ".shizuku";
-    const provider = ops.open_external_provider(provider_name, user_id);
+    auto provider_name = package_name ~ ".shizuku";
+    auto provider = ops.open_external_provider(provider_name, user_id);
 
     if (!provider.valid)
     {
