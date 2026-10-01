@@ -7,6 +7,7 @@ import crawlspace.shizuku.clients;
 import crawlspace.shizuku.config_reconcile;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.permission;
+import crawlspace.shizuku.permission_request;
 import crawlspace.shizuku.rish;
 import crawlspace.shizuku.rish_client;
 import crawlspace.shizuku.service;
@@ -2212,6 +2213,161 @@ unittest
         config_write_schedule_action(28, true) ==
         ConfigWriteScheduleAction.remove_then_post);
     assert(shizuku_config_write_delay_ms == 10_000);
+}
+
+unittest
+{
+    ClientRegistry clients;
+    ConfigStore config;
+
+    BinderCaller self_uid = BinderCaller(2_000, 999);
+    assert(check_self_permission(
+        clients,
+        self_uid,
+        2_000,
+        123));
+
+    BinderCaller self_pid = BinderCaller(50_000, 123);
+    assert(check_self_permission(
+        clients,
+        self_pid,
+        2_000,
+        123));
+
+    assert(
+        permission_rationale(
+            clients,
+            config,
+            self_pid,
+            2_000,
+            123) ==
+        PermissionRationaleResult.server_self_true);
+}
+
+unittest
+{
+    ClientRegistry clients;
+    ConfigStore config;
+
+    add_permission_client(
+        clients,
+        112_345,
+        77,
+        "example.client",
+        false);
+
+    BinderCaller caller = BinderCaller(112_345, 77);
+
+    auto undecided = request_permission_decision(
+        clients,
+        config,
+        caller,
+        2_000,
+        123,
+        8);
+
+    assert(
+        undecided.action ==
+        PermissionRequestAction.show_confirmation);
+
+    config.update(
+        112_345,
+        ["example.client"],
+        mask_permission,
+        flag_denied);
+
+    auto denied = request_permission_decision(
+        clients,
+        config,
+        caller,
+        2_000,
+        123,
+        8);
+
+    assert(
+        denied.action ==
+        PermissionRequestAction.persistently_denied);
+
+    assert(
+        permission_rationale(
+            clients,
+            config,
+            caller,
+            2_000,
+            123) ==
+        PermissionRationaleResult.show);
+}
+
+unittest
+{
+    ClientRegistry clients;
+    ConfigStore config;
+
+    add_permission_client(
+        clients,
+        112_345,
+        78,
+        "example.client",
+        true);
+
+    BinderCaller caller = BinderCaller(112_345, 78);
+    auto granted = request_permission_decision(
+        clients,
+        config,
+        caller,
+        2_000,
+        123,
+        99);
+
+    assert(
+        granted.action ==
+        PermissionRequestAction.already_granted);
+    assert(check_self_permission(
+        clients,
+        caller,
+        2_000,
+        123));
+}
+
+unittest
+{
+    auto missing_app = permission_confirmation_plan(
+        10,
+        false,
+        false,
+        false);
+    assert(
+        missing_app.action ==
+        ConfirmationAction.no_application);
+
+    auto no_manager = permission_confirmation_plan(
+        10,
+        true,
+        false,
+        false);
+    assert(
+        no_manager.action ==
+        ConfirmationAction.dispatch_denied);
+
+    auto normal = permission_confirmation_plan(
+        10,
+        true,
+        true,
+        false);
+    assert(
+        normal.action ==
+        ConfirmationAction.start_manager_activity);
+    assert(normal.activity_user_id == 10);
+
+    auto work = permission_confirmation_plan(
+        10,
+        true,
+        false,
+        true);
+    assert(
+        work.action ==
+        ConfirmationAction.start_manager_activity);
+    assert(work.activity_user_id == 0);
 }
 
 void main()
