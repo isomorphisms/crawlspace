@@ -3,6 +3,7 @@ module shizuku_d_logic_test;
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.permission;
+import crawlspace.shizuku.rish;
 import crawlspace.shizuku.service;
 import crawlspace.shizuku.startup;
 import crawlspace.shizuku.types;
@@ -1228,6 +1229,266 @@ unittest
         ops);
 
     assert(flags == flag_allowed);
+}
+
+private class RishFake
+{
+    int starts;
+    int sizes;
+    int exit_requests;
+    int destroys;
+    ulong last_size;
+    RishHostSpec last_spec;
+
+    RishHostHandle start_host(
+        AndroidPid owner_pid,
+        RishHostSpec spec,
+        ulong generation)
+    {
+        ++starts;
+        last_spec = spec;
+
+        RishHostHandle handle;
+        handle.generation = generation;
+        handle.owner_pid = owner_pid;
+        handle.child_pid = 7_000 + starts;
+        handle.ptmx = 100 + starts;
+        return handle;
+    }
+
+    void set_window_size(
+        RishHostHandle,
+        ulong packed_size)
+    {
+        ++sizes;
+        last_size = packed_size;
+    }
+
+    int get_exit_code(RishHostHandle host)
+    {
+        ++exit_requests;
+        return host.child_pid == 7_001 ? 17 : 23;
+    }
+
+    void destroy_host(RishHostHandle)
+    {
+        ++destroys;
+    }
+}
+
+private RishHostOps rish_ops(RishFake fake)
+{
+    RishHostOps ops;
+    ops.start_host = &fake.start_host;
+    ops.set_window_size = &fake.set_window_size;
+    ops.get_exit_code = &fake.get_exit_code;
+    ops.destroy_host = &fake.destroy_host;
+    return ops;
+}
+
+private bool allow_rish(string)
+{
+    return true;
+}
+
+unittest
+{
+    assert(!rish_preserve_environment(
+        false,
+        ["PATH=/termux/bin"]));
+
+    assert(rish_preserve_environment(
+        false,
+        [
+            "PATH=/termux/bin",
+            "RISH_PRESERVE_ENV=1"
+        ]));
+
+    assert(rish_preserve_environment(
+        true,
+        ["PATH=/termux/bin"]));
+
+    assert(!rish_preserve_environment(
+        true,
+        [
+            "RISH_PRESERVE_ENV=0",
+            "RISH_PRESERVE_ENV=1"
+        ]));
+
+    assert(rish_preserve_environment(
+        false,
+        [
+            "RISH_PRESERVE_ENV=1",
+            "RISH_PRESERVE_ENV=0"
+        ]));
+}
+
+unittest
+{
+    RishHostRegistry hosts;
+    auto fake = new RishFake;
+    auto ops = rish_ops(fake);
+
+    RishHostSpec request;
+    request.arguments = ["-c", "id"];
+    request.environment = [
+        "PATH=/data/data/com.termux/files/usr/bin"
+    ];
+    request.directory = "/data/data/com.termux/files/home";
+    request.tty = atty_out | atty_err;
+    request.stdin_fd = FileDescriptorHandle(3);
+    request.stdout_fd = FileDescriptorHandle(4);
+    request.stderr_fd = FileDescriptorHandle(5);
+
+    auto created = dispatch_rish_create_host(
+        hosts,
+        901,
+        false,
+        true,
+        0,
+        request,
+        &allow_rish,
+        ops);
+
+    assert(created.handled);
+    assert(created.host_created);
+    assert(fake.starts == 1);
+    assert(hosts.length == 1);
+    assert(!fake.last_spec.environment_preserved);
+    assert(fake.last_spec.environment.length == 0);
+
+    // stderr is on the PTY when ATTY_ERR is set.
+    assert(!fake.last_spec.stderr_fd.valid);
+
+    auto size = dispatch_rish_set_window_size(
+        hosts,
+        901,
+        0x1122334455667788UL,
+        &allow_rish,
+        ops);
+
+    assert(size.host_found);
+    assert(fake.sizes == 1);
+    assert(fake.last_size == 0x1122334455667788UL);
+
+    auto exit = dispatch_rish_get_exit_code(
+        hosts,
+        901,
+        &allow_rish,
+        ops);
+
+    assert(exit.host_found);
+    assert(exit.exit_code == 17);
+    assert(fake.exit_requests == 1);
+}
+
+unittest
+{
+    RishHostRegistry hosts;
+    auto fake = new RishFake;
+    auto ops = rish_ops(fake);
+
+    RishHostSpec request;
+    request.arguments = ["-c", "printf x"];
+    request.environment = ["RISH_PRESERVE_ENV=1"];
+
+    auto oneway = dispatch_rish_create_host(
+        hosts,
+        902,
+        false,
+        true,
+        binder_flag_oneway,
+        request,
+        &allow_rish,
+        ops);
+
+    assert(oneway.handled);
+    assert(!oneway.host_created);
+    assert(fake.starts == 0);
+    assert(hosts.length == 0);
+
+    auto no_reply = dispatch_rish_create_host(
+        hosts,
+        902,
+        false,
+        false,
+        0,
+        request,
+        &allow_rish,
+        ops);
+
+    assert(no_reply.handled);
+    assert(!no_reply.host_created);
+    assert(fake.starts == 0);
+}
+
+unittest
+{
+    RishHostRegistry hosts;
+    auto fake = new RishFake;
+    auto ops = rish_ops(fake);
+
+    RishHostSpec first;
+    first.arguments = ["-c", "first"];
+
+    auto a = dispatch_rish_create_host(
+        hosts,
+        903,
+        true,
+        true,
+        0,
+        first,
+        &allow_rish,
+        ops);
+    assert(a.host_created);
+
+    RishHostSpec second;
+    second.arguments = ["-c", "second"];
+
+    auto b = dispatch_rish_create_host(
+        hosts,
+        903,
+        true,
+        true,
+        0,
+        second,
+        &allow_rish,
+        ops);
+    assert(b.host_created);
+
+    assert(fake.starts == 2);
+    assert(hosts.length == 1);
+    assert(hosts.find(903).spec.arguments[1] == "second");
+
+    // Upstream replaces HOSTS[pid] without explicitly destroying the old host.
+    assert(fake.destroys == 0);
+
+    auto exit = dispatch_rish_get_exit_code(
+        hosts,
+        903,
+        &allow_rish,
+        ops);
+    assert(exit.exit_code == 23);
+}
+
+unittest
+{
+    RishConfig config;
+    config.interface_token = "moe.shizuku.server.IShizukuService";
+    config.transaction_code_start = 30_000;
+
+    assert(
+        classify_rish_transaction(config, 30_000) ==
+        RishDispatchKind.create_host);
+    assert(
+        classify_rish_transaction(config, 30_001) ==
+        RishDispatchKind.set_window_size);
+    assert(
+        classify_rish_transaction(config, 30_002) ==
+        RishDispatchKind.get_exit_code);
+    assert(
+        classify_rish_transaction(config, 29_999) ==
+        RishDispatchKind.not_rish);
 }
 
 void main()
