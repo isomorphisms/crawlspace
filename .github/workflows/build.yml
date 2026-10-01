@@ -6,6 +6,7 @@ on:
       - main
       - adb-shell-bridge
       - capability-discovery-v1
+      - longview-control-plane
   pull_request:
 
 permissions:

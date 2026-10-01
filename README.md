@@ -74,7 +74,34 @@ daemon_uid=2000
 authorization_scope=local-bearer-token
 capability=crawlspace.discovery.v1
 capability=crawlspace.run.absolute-path.v1
+capability=crawlspace.runtime-identity.v1
 ```
+
+For the identity of the process that owns the listening control plane:
+
+```sh
+crawlspace identify
+```
+
+A current response separates continuity, process identity, authority, role, and
+the exact source build:
+
+```text
+status=ready
+transport_version=2
+identity_version=1
+daemon_start_identity=0123456789abcdef0123456789abcdef
+daemon_pid=1234
+daemon_uid=2000
+daemon_authority=shell
+daemon_role=native-command-bridge
+build_id=81587108d3eab33cec5f1470ac86d0c453f1ff1b
+authorization_scope=local-bearer-token
+```
+
+The random start identity is a continuity marker. The build ID identifies the
+compiled Crawl Space source. Neither field claims that an installed Shizuku
+manager/server has the same identity.
 
 Pass the last observed identity to detect a daemon replacement:
 

@@ -14,6 +14,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifndef CRAWLSPACE_BUILD_ID
+#define CRAWLSPACE_BUILD_ID "unknown"
+#endif
+
 #define DEFAULT_PORT 49317
 #define MAX_ARGS 128
 #define MAX_ARG_BYTES 65536
@@ -26,7 +30,8 @@ static const unsigned char discovery_magic[4] = {'C', 'S', 'P', '2'};
 static const unsigned char discovery_response_magic[4] = {'C', 'S', 'R', '2'};
 
 enum discovery_operation {
-    DISCOVER_CAPABILITIES = 1
+    DISCOVER_CAPABILITIES = 1,
+    DISCOVER_RUNTIME_IDENTITY = 2
 };
 
 enum discovery_status {
@@ -39,12 +44,29 @@ enum discovery_status {
 
 static const char *const capabilities[] = {
     "crawlspace.discovery.v1",
-    "crawlspace.run.absolute-path.v1"
+    "crawlspace.run.absolute-path.v1",
+    "crawlspace.runtime-identity.v1"
 };
 
 static void die(const char *message) {
     perror(message);
     exit(1);
+}
+
+static int set_close_on_exec(int fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static void reap_children(int signal_number) {
+    (void)signal_number;
+    int saved_errno = errno;
+    while (waitpid(-1, NULL, WNOHANG) > 0) {
+    }
+    errno = saved_errno;
 }
 
 static int read_all(int fd, void *buffer, size_t bytes) {
@@ -342,6 +364,7 @@ static void run_request(int connection,
 
     if (child == 0) {
         close(output[0]);
+        close(connection);
 
         int null_input = open("/dev/null", O_RDONLY);
         if (null_input >= 0) {
@@ -404,7 +427,8 @@ static void discovery_request(int connection,
                               const unsigned char *server_token,
                               size_t server_token_bytes,
                               const unsigned char daemon_id[DAEMON_ID_BYTES],
-                              uid_t daemon_uid) {
+                              uid_t daemon_uid,
+                              pid_t daemon_pid) {
     uint32_t token_bytes;
     unsigned char received_token[MAX_TOKEN_BYTES];
     if (!read_token(connection, received_token, &token_bytes)) {
@@ -423,7 +447,8 @@ static void discovery_request(int connection,
         write_discovery_status(connection, DISCOVERY_MALFORMED);
         return;
     }
-    if (operation != DISCOVER_CAPABILITIES) {
+    if (operation != DISCOVER_CAPABILITIES &&
+        operation != DISCOVER_RUNTIME_IDENTITY) {
         write_discovery_status(connection, DISCOVERY_OPERATION_DENIED);
         return;
     }
@@ -448,20 +473,44 @@ static void discovery_request(int connection,
         status = DISCOVERY_RESTARTED;
     }
 
-    if (write_discovery_status(connection, status) < 0 ||
-        write_u32(connection, 1) < 0 ||
-        write_u32(connection, (uint32_t)daemon_uid) < 0 ||
-        write_counted_bytes(connection, daemon_id, DAEMON_ID_BYTES) < 0 ||
-        write_u32(connection,
-                  (uint32_t)(sizeof(capabilities) / sizeof(capabilities[0]))) < 0) {
+    if (write_discovery_status(connection, status) < 0) {
         return;
     }
 
-    for (size_t i = 0; i < sizeof(capabilities) / sizeof(capabilities[0]); i++) {
-        if (write_counted_bytes(connection,
-                                capabilities[i], strlen(capabilities[i])) < 0) {
+    if (operation == DISCOVER_CAPABILITIES) {
+        if (write_u32(connection, 1) < 0 ||
+            write_u32(connection, (uint32_t)daemon_uid) < 0 ||
+            write_counted_bytes(connection, daemon_id, DAEMON_ID_BYTES) < 0 ||
+            write_u32(connection,
+                      (uint32_t)(sizeof(capabilities) /
+                                 sizeof(capabilities[0]))) < 0) {
             return;
         }
+
+        for (size_t i = 0;
+             i < sizeof(capabilities) / sizeof(capabilities[0]);
+             i++) {
+            if (write_counted_bytes(connection,
+                                    capabilities[i],
+                                    strlen(capabilities[i])) < 0) {
+                return;
+            }
+        }
+        return;
+    }
+
+    const char *authority = daemon_uid == 0 ? "root" : "shell";
+    static const char role[] = "native-command-bridge";
+    if (write_u32(connection, 1) < 0 ||
+        write_u32(connection, (uint32_t)daemon_uid) < 0 ||
+        write_u32(connection, (uint32_t)daemon_pid) < 0 ||
+        write_counted_bytes(connection, daemon_id, DAEMON_ID_BYTES) < 0 ||
+        write_counted_bytes(connection, role, sizeof(role) - 1) < 0 ||
+        write_counted_bytes(connection, authority, strlen(authority)) < 0 ||
+        write_counted_bytes(connection,
+                            CRAWLSPACE_BUILD_ID,
+                            strlen(CRAWLSPACE_BUILD_ID)) < 0) {
+        return;
     }
 }
 
@@ -469,7 +518,8 @@ static void handle_connection(int connection,
                               const unsigned char *server_token,
                               size_t server_token_bytes,
                               const unsigned char daemon_id[DAEMON_ID_BYTES],
-                              uid_t daemon_uid) {
+                              uid_t daemon_uid,
+                              pid_t daemon_pid) {
     unsigned char received_magic[sizeof(run_magic)];
     if (read_all(connection, received_magic, sizeof(received_magic)) != 1) {
         return;
@@ -480,7 +530,7 @@ static void handle_connection(int connection,
     } else if (memcmp(received_magic, discovery_magic,
                       sizeof(discovery_magic)) == 0) {
         discovery_request(connection, server_token, server_token_bytes,
-                          daemon_id, daemon_uid);
+                          daemon_id, daemon_uid, daemon_pid);
     }
 }
 
@@ -498,6 +548,7 @@ static void make_daemon_id(unsigned char daemon_id[DAEMON_ID_BYTES]) {
 
 static int serve(const char *token_path, int port) {
     uid_t uid = getuid();
+    pid_t daemon_pid = getpid();
 
     if (uid != 2000 && uid != 0) {
         fprintf(stderr,
@@ -517,6 +568,9 @@ static int serve(const char *token_path, int port) {
     if (listener < 0) {
         die("socket");
     }
+    if (set_close_on_exec(listener) < 0) {
+        die("listener close-on-exec");
+    }
 
     int reuse = 1;
     setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
@@ -534,9 +588,19 @@ static int serve(const char *token_path, int port) {
         die("listen");
     }
 
+    struct sigaction child_action;
+    memset(&child_action, 0, sizeof(child_action));
+    child_action.sa_handler = reap_children;
+    sigemptyset(&child_action.sa_mask);
+    child_action.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &child_action, NULL) < 0) {
+        die("sigaction SIGCHLD");
+    }
+
     fprintf(stderr,
-            "crawlspace: uid=%u listening on 127.0.0.1:%d\n",
+            "crawlspace: uid=%u pid=%u listening on 127.0.0.1:%d\n",
             (unsigned)uid,
+            (unsigned)daemon_pid,
             port);
 
     for (;;) {
@@ -548,11 +612,26 @@ static int serve(const char *token_path, int port) {
             die("accept");
         }
 
-        if (set_socket_timeout(connection, timeout_ms) < 0) {
+        if (set_close_on_exec(connection) < 0 ||
+            set_socket_timeout(connection, timeout_ms) < 0) {
             close(connection);
             continue;
         }
-        handle_connection(connection, token, token_bytes, daemon_id, uid);
+
+        pid_t handler = fork();
+        if (handler < 0) {
+            close(connection);
+            continue;
+        }
+        if (handler == 0) {
+            signal(SIGCHLD, SIG_DFL);
+            close(listener);
+            handle_connection(connection, token, token_bytes,
+                              daemon_id, uid, daemon_pid);
+            close(connection);
+            _exit(0);
+        }
+
         close(connection);
     }
 }
@@ -596,6 +675,10 @@ static int open_client_connection(int port,
     int connection = socket(AF_INET, SOCK_STREAM, 0);
     if (connection < 0) {
         die("socket");
+    }
+    if (set_close_on_exec(connection) < 0) {
+        close(connection);
+        die("client close-on-exec");
     }
 
     struct sockaddr_in address;
@@ -670,6 +753,19 @@ static void print_daemon_id(const unsigned char identity[DAEMON_ID_BYTES]) {
     for (size_t i = 0; i < DAEMON_ID_BYTES; i++) {
         printf("%02x", identity[i]);
     }
+}
+
+static int read_counted_text(int fd, char *buffer, size_t capacity) {
+    uint32_t bytes;
+    if (capacity == 0 ||
+        read_u32(fd, &bytes) != 1 ||
+        bytes == 0 ||
+        bytes >= capacity ||
+        read_all(fd, buffer, bytes) != 1) {
+        return 0;
+    }
+    buffer[bytes] = '\0';
+    return 1;
 }
 
 static int discovery_client(const char *expected_identity_text) {
@@ -768,18 +864,121 @@ static int discovery_client(const char *expected_identity_text) {
            daemon_uid);
 
     for (uint32_t i = 0; i < capability_count; i++) {
-        uint32_t bytes;
         char capability[129];
-        if (read_u32(connection, &bytes) != 1 ||
-            bytes == 0 || bytes >= sizeof(capability) ||
-            read_all(connection, capability, bytes) != 1) {
+        if (!read_counted_text(connection, capability, sizeof(capability))) {
             close(connection);
             fprintf(stderr, "crawlspace: malformed discovery response\n");
             return 65;
         }
-        capability[bytes] = '\0';
         printf("capability=%s\n", capability);
     }
+
+    close(connection);
+    return 0;
+}
+
+static int runtime_identity_client(const char *expected_identity_text) {
+    unsigned char expected_identity[DAEMON_ID_BYTES];
+    uint32_t expected_identity_bytes = 0;
+    if (expected_identity_text != NULL) {
+        if (!decode_daemon_id(expected_identity_text, expected_identity)) {
+            fprintf(stderr,
+                    "crawlspace: expected daemon identity must be "
+                    "%d hexadecimal characters\n",
+                    DAEMON_ID_BYTES * 2);
+            return 2;
+        }
+        expected_identity_bytes = DAEMON_ID_BYTES;
+    }
+
+    unsigned char token[MAX_TOKEN_BYTES];
+    size_t token_bytes = load_token(client_token_path(), token, sizeof(token));
+    int connection = open_client_connection(configured_port(),
+                                            parse_timeout_ms(), 1, 1);
+    if (connection < 0) {
+        return -connection;
+    }
+
+    if (write_all(connection, discovery_magic, sizeof(discovery_magic)) < 0 ||
+        write_u32(connection, (uint32_t)token_bytes) < 0 ||
+        write_all(connection, token, token_bytes) < 0 ||
+        write_u32(connection, DISCOVER_RUNTIME_IDENTITY) < 0 ||
+        write_u32(connection, expected_identity_bytes) < 0 ||
+        (expected_identity_bytes != 0 &&
+         write_all(connection, expected_identity,
+                   sizeof(expected_identity)) < 0)) {
+        int timeout = timed_out();
+        close(connection);
+        if (timeout) {
+            printf("status=unavailable\nreason=timeout\n");
+            return 124;
+        }
+        fprintf(stderr, "crawlspace: failed to write identity request\n");
+        return 125;
+    }
+
+    unsigned char response_magic[sizeof(discovery_response_magic)];
+    uint32_t status;
+    if (read_all(connection, response_magic, sizeof(response_magic)) != 1 ||
+        memcmp(response_magic, discovery_response_magic,
+               sizeof(response_magic)) != 0 ||
+        read_u32(connection, &status) != 1) {
+        int timeout = timed_out();
+        close(connection);
+        if (timeout) {
+            printf("status=unavailable\nreason=timeout\n");
+            return 124;
+        }
+        fprintf(stderr, "crawlspace: malformed identity response\n");
+        return 65;
+    }
+
+    if (status == DISCOVERY_DENIED ||
+        status == DISCOVERY_OPERATION_DENIED) {
+        close(connection);
+        printf("status=denied\n");
+        return 77;
+    }
+    if (status == DISCOVERY_MALFORMED ||
+        (status != DISCOVERY_READY && status != DISCOVERY_RESTARTED)) {
+        close(connection);
+        fprintf(stderr, "crawlspace: daemon rejected malformed identity request\n");
+        return 65;
+    }
+
+    uint32_t identity_version;
+    uint32_t daemon_uid;
+    uint32_t daemon_pid;
+    uint32_t daemon_id_bytes;
+    unsigned char daemon_id[DAEMON_ID_BYTES];
+    char role[65];
+    char authority[17];
+    char build_id[129];
+
+    if (read_u32(connection, &identity_version) != 1 ||
+        identity_version != 1 ||
+        read_u32(connection, &daemon_uid) != 1 ||
+        read_u32(connection, &daemon_pid) != 1 ||
+        read_u32(connection, &daemon_id_bytes) != 1 ||
+        daemon_id_bytes != DAEMON_ID_BYTES ||
+        read_all(connection, daemon_id, sizeof(daemon_id)) != 1 ||
+        !read_counted_text(connection, role, sizeof(role)) ||
+        !read_counted_text(connection, authority, sizeof(authority)) ||
+        !read_counted_text(connection, build_id, sizeof(build_id))) {
+        close(connection);
+        fprintf(stderr, "crawlspace: malformed identity response\n");
+        return 65;
+    }
+
+    printf("status=%s\ntransport_version=2\nidentity_version=%u\n",
+           status == DISCOVERY_RESTARTED ? "restarted" : "ready",
+           identity_version);
+    printf("daemon_start_identity=");
+    print_daemon_id(daemon_id);
+    printf("\ndaemon_pid=%u\ndaemon_uid=%u\n", daemon_pid, daemon_uid);
+    printf("daemon_authority=%s\ndaemon_role=%s\nbuild_id=%s\n",
+           authority, role, build_id);
+    printf("authorization_scope=local-bearer-token\n");
 
     close(connection);
     return 0;
@@ -860,6 +1059,7 @@ static void usage(void) {
             "  crawlspace --version\n"
             "  crawlspace serve TOKEN_FILE [PORT]\n"
             "  crawlspace discover [EXPECTED_DAEMON_ID]\n"
+            "  crawlspace identify [EXPECTED_DAEMON_ID]\n"
             "  crawlspace run /absolute/command [ARG ...]\n");
 }
 
@@ -885,6 +1085,10 @@ int main(int argc, char **argv) {
 
     if ((argc == 2 || argc == 3) && strcmp(argv[1], "discover") == 0) {
         return discovery_client(argc == 3 ? argv[2] : NULL);
+    }
+
+    if ((argc == 2 || argc == 3) && strcmp(argv[1], "identify") == 0) {
+        return runtime_identity_client(argc == 3 ? argv[2] : NULL);
     }
 
     usage();
