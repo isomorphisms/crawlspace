@@ -18,6 +18,7 @@ import crawlspace.shizuku.transaction_router;
 import crawlspace.shizuku.types;
 import crawlspace.shizuku.user_service;
 import crawlspace.shizuku.user_service_apk;
+import crawlspace.shizuku.user_service_entry;
 
 private BinderHandle binder_handle(size_t value)
 {
@@ -2738,6 +2739,128 @@ unittest
 
     assert(completed);
     assert(fake.sleeps >= 1);
+}
+
+private class UserServiceEntryFake
+{
+    int creates;
+    UserServicePlatformRequest last_request;
+    bool succeed = true;
+
+    BinderHandle create_binder(
+        UserServicePlatformRequest request)
+    {
+        ++creates;
+        last_request = request;
+        return succeed
+            ? binder_handle(1_234)
+            : BinderHandle.init;
+    }
+}
+
+unittest
+{
+    auto parsed = parse_user_service_arguments([
+        "--token=old",
+        "--token=new",
+        "--package=example.client",
+        "--class=example.Service",
+        "--uid=112345",
+        "--debug-name=debug-name"
+    ]);
+
+    assert(parsed.ok);
+    assert(parsed.arguments.token == "new");
+    assert(
+        parsed.arguments.package_name ==
+        "example.client");
+    assert(
+        parsed.arguments.class_name ==
+        "example.Service");
+    assert(parsed.arguments.calling_uid == 112_345);
+    assert(parsed.arguments.has_debug_name);
+    assert(
+        user_service_android_user(
+            parsed.arguments.calling_uid) == 1);
+    assert(
+        user_service_process_name(
+            parsed.arguments) ==
+        "debug-name");
+}
+
+unittest
+{
+    auto defaults =
+        parse_user_service_arguments([]);
+
+    assert(defaults.ok);
+    assert(defaults.arguments.calling_uid == -1);
+    assert(
+        user_service_android_user(-1) == 0);
+    assert(
+        user_service_process_name(
+            defaults.arguments) ==
+        ":user_service");
+
+    auto invalid =
+        parse_user_service_arguments(
+            ["--uid=not-a-number"]);
+
+    assert(!invalid.ok);
+    assert(
+        invalid.error ==
+        UserServiceEntryError.invalid_uid);
+}
+
+unittest
+{
+    auto fake = new UserServiceEntryFake;
+
+    UserServiceEntryOps ops;
+    ops.public_context_constructor_exists = true;
+    ops.create_binder = &fake.create_binder;
+
+    auto result = create_user_service([
+        "--token=token",
+        "--package=example.client",
+        "--class=example.Service",
+        "--uid=112345"
+    ], ops);
+
+    assert(result.ok);
+    assert(result.token == "token");
+    assert(fake.creates == 1);
+    assert(
+        result.request.constructor ==
+        UserServiceConstructor.context_constructor);
+    assert(
+        result.request.process_name ==
+        "example.client:user_service");
+    assert(result.request.user_id == 1);
+
+    ops.public_context_constructor_exists = false;
+    auto fallback = create_user_service([
+        "--package=example.client",
+        "--class=example.Service",
+        "--uid=112345"
+    ], ops);
+
+    assert(fallback.ok);
+    assert(
+        fallback.request.constructor ==
+        UserServiceConstructor.no_arg_constructor);
+
+    fake.succeed = false;
+    auto failed = create_user_service([
+        "--package=example.client",
+        "--class=example.Service",
+        "--uid=112345"
+    ], ops);
+
+    assert(!failed.ok);
+    assert(
+        failed.error ==
+        UserServiceEntryError.platform_creation_failed);
 }
 
 void main()
