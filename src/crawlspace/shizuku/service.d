@@ -85,10 +85,10 @@ TransactRemoteResult transact_remote(
             false);
     }
 
-    const target = ops.read_binder(input);
-    const target_code = cast(TransactionCode) ops.read_int(input);
-    const client = clients.find_client(client_key(caller));
-    const target_flags = target_flags_for_client(
+    auto target = ops.read_binder(input);
+    auto target_code = cast(TransactionCode) ops.read_int(input);
+    auto client = clients.find_client(client_key(caller));
+    auto target_flags = target_flags_for_client(
         client,
         outer_flags,
         input,
@@ -107,7 +107,7 @@ TransactRemoteResult transact_remote(
             false);
     }
 
-    const identity = ops.clear_calling_identity();
+    auto identity = ops.clear_calling_identity();
 
     /*
      * Upstream currently restores identity after transact but before its
@@ -119,7 +119,7 @@ TransactRemoteResult transact_remote(
         ops.restore_calling_identity(identity);
     }
 
-    const accepted = ops.binder_transact(
+    auto accepted = ops.binder_transact(
         target,
         target_code,
         forwarded_data,
