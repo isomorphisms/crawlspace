@@ -1779,6 +1779,7 @@ private class AndroidBoundaryFake
     int deletes;
     int clears;
     int restores;
+    int binder_releases;
     bool transacted;
 
     AndroidUid calling_uid()
@@ -1805,6 +1806,12 @@ private class AndroidBoundaryFake
     {
         value = 91;
         return true;
+    }
+
+    void release_binder(BinderHandle binder)
+    {
+        assert(binder.valid);
+        ++binder_releases;
     }
 
     ParcelHandle create_parcel()
@@ -1877,6 +1884,7 @@ private TransparentBinderBridge transparent_bridge(AndroidBoundaryFake fake)
     TransparentBinderBridge ops;
     ops.read_strong_binder = &fake.read_strong_binder;
     ops.read_int32 = &fake.read_int32;
+    ops.release_binder = &fake.release_binder;
     ops.create_parcel = &fake.create_parcel;
     ops.delete_parcel = &fake.delete_parcel;
     ops.parcel_position = &fake.parcel_position;
@@ -1959,6 +1967,7 @@ unittest
     assert(fake.clears == 1);
     assert(fake.restores == 1);
     assert(fake.deletes == 1);
+    assert(fake.binder_releases == 1);
     assert(fake.transacted);
 }
 
