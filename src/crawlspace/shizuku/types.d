@@ -11,7 +11,11 @@ enum int shizuku_api_v13 = 13;
 
 struct BinderHandle
 {
+    // Native AIBinder* or equivalent.
     void* raw;
+
+    // Optional android.os.IBinder jobject used by the framework bridge.
+    void* framework_raw;
 
     bool valid() const nothrow @nogc
     {
@@ -21,7 +25,11 @@ struct BinderHandle
 
 struct ParcelHandle
 {
+    // Native AParcel* wrapper or equivalent.
     void* raw;
+
+    // Optional android.os.Parcel jobject used by the framework bridge.
+    void* framework_raw;
 
     bool valid() const nothrow @nogc
     {
