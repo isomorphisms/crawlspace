@@ -37,6 +37,7 @@ jobs:
             src/crawlspace/shizuku/rish.d \
             src/crawlspace/shizuku/rish_client.d \
             src/crawlspace/shizuku/user_service.d \
+            src/crawlspace/shizuku/user_service_apk.d \
             src/crawlspace/shizuku/startup.d \
             src/crawlspace/shizuku/transaction_router.d \
             -of=/tmp/shizuku_d_logic
