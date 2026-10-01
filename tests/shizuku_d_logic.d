@@ -2102,6 +2102,21 @@ private class ConfigReconcileFake
             return ["still.present"];
         }
 
+        if (uid == 400)
+        {
+            return ["existing.package", "second.package"];
+        }
+
+        if (uid == 500)
+        {
+            return ["denied.package"];
+        }
+
+        if (uid == 600)
+        {
+            return ["unknown.package"];
+        }
+
         return [];
     }
 }
@@ -2180,9 +2195,11 @@ unittest
     failed.package_name = "unknown.package";
     failed.check_succeeded = false;
 
+    auto fake = new ConfigReconcileFake;
+
     auto result = reconcile_config(
         config,
-        null,
+        &fake.current_packages,
         [existing, denied, failed]);
 
     assert(result.changed);
