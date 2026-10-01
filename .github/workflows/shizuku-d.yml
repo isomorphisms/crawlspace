@@ -27,6 +27,7 @@ jobs:
             src/crawlspace/shizuku/clients.d \
             src/crawlspace/shizuku/service.d \
             src/crawlspace/shizuku/delivery.d \
+            src/crawlspace/shizuku/user_service.d \
             -of=/tmp/shizuku_d_logic
 
       - name: Run translated Shizuku logic tests
