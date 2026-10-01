@@ -1,0 +1,49 @@
+name: shizuku-d
+
+on:
+  push:
+    branches:
+      - shizuku-d
+  pull_request:
+    branches:
+      - shizuku
+  workflow_dispatch:
+
+jobs:
+  host-logic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: dmd-latest
+
+      - name: Compile translated Shizuku logic
+        run: |
+          dmd -Isrc -unittest \
+            tests/shizuku_d_logic.d \
+            src/crawlspace/shizuku/types.d \
+            src/crawlspace/shizuku/android_boundary.d \
+            src/crawlspace/shizuku/applications.d \
+            src/crawlspace/shizuku/binder_sender.d \
+            src/crawlspace/shizuku/clients.d \
+            src/crawlspace/shizuku/config_reconcile.d \
+            src/crawlspace/shizuku/service.d \
+            src/crawlspace/shizuku/server_lifecycle.d \
+            src/crawlspace/shizuku/delivery.d \
+            src/crawlspace/shizuku/framework_forwarding.d \
+            src/crawlspace/shizuku/permission.d \
+            src/crawlspace/shizuku/permission_request.d \
+            src/crawlspace/shizuku/rish.d \
+            src/crawlspace/shizuku/rish_client.d \
+            src/crawlspace/shizuku/remote_process.d \
+            src/crawlspace/shizuku/user_service.d \
+            src/crawlspace/shizuku/user_service_apk.d \
+            src/crawlspace/shizuku/user_service_entry.d \
+            src/crawlspace/shizuku/startup.d \
+            src/crawlspace/shizuku/transaction_router.d \
+            -of=/tmp/shizuku_d_logic
+
+      - name: Run translated Shizuku logic tests
+        run: /tmp/shizuku_d_logic
