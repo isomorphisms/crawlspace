@@ -1,5 +1,6 @@
 module shizuku_d_logic_test;
 
+import crawlspace.shizuku.android_boundary;
 import crawlspace.shizuku.applications;
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
@@ -1758,6 +1759,194 @@ unittest
     assert(
         targets[0].package_name ==
         "example.permission-only");
+}
+
+private class AndroidBoundaryFake
+{
+    AndroidUid uid = 2_000;
+    AndroidPid pid = 444;
+    int position = 7;
+    int size = 19;
+    int append_start;
+    int append_size;
+    int deletes;
+    int clears;
+    int restores;
+    bool transacted;
+
+    AndroidUid calling_uid()
+    {
+        return uid;
+    }
+
+    AndroidPid calling_pid()
+    {
+        return pid;
+    }
+
+    bool read_strong_binder(
+        ParcelHandle,
+        out BinderHandle binder)
+    {
+        binder = binder_handle(600);
+        return true;
+    }
+
+    bool read_int32(
+        ParcelHandle,
+        out int value)
+    {
+        value = 91;
+        return true;
+    }
+
+    ParcelHandle create_parcel()
+    {
+        return parcel_handle(700);
+    }
+
+    void delete_parcel(ParcelHandle)
+    {
+        ++deletes;
+    }
+
+    int parcel_position(ParcelHandle)
+    {
+        return position;
+    }
+
+    int parcel_size(ParcelHandle)
+    {
+        return size;
+    }
+
+    bool append_parcel(
+        ParcelHandle,
+        ParcelHandle,
+        int start,
+        int count)
+    {
+        append_start = start;
+        append_size = count;
+        return true;
+    }
+
+    bool transact(
+        BinderHandle,
+        TransactionCode code,
+        ParcelHandle,
+        ParcelHandle,
+        TransactionFlags flags)
+    {
+        assert(code == 91);
+        assert(flags == 5);
+        transacted = true;
+        return true;
+    }
+
+    ulong clear_identity()
+    {
+        ++clears;
+        return 0x55AA;
+    }
+
+    void restore_identity(ulong token)
+    {
+        assert(token == 0x55AA);
+        ++restores;
+    }
+}
+
+private PublicNdkBinderOps public_ndk_ops(AndroidBoundaryFake fake)
+{
+    PublicNdkBinderOps ops;
+    ops.calling_uid = &fake.calling_uid;
+    ops.calling_pid = &fake.calling_pid;
+    ops.read_strong_binder = &fake.read_strong_binder;
+    ops.read_int32 = &fake.read_int32;
+    ops.create_parcel = &fake.create_parcel;
+    ops.delete_parcel = &fake.delete_parcel;
+    ops.parcel_position = &fake.parcel_position;
+    ops.parcel_size = &fake.parcel_size;
+    ops.append_parcel = &fake.append_parcel;
+    ops.transact = &fake.transact;
+    return ops;
+}
+
+private BinderIdentityBridge identity_bridge(AndroidBoundaryFake fake)
+{
+    BinderIdentityBridge bridge;
+    bridge.clear_calling_identity = &fake.clear_identity;
+    bridge.restore_calling_identity = &fake.restore_identity;
+    return bridge;
+}
+
+unittest
+{
+    PublicNdkBinderOps incomplete;
+    BinderIdentityBridge identity;
+
+    auto result = build_android_service_adapter(
+        incomplete,
+        identity);
+
+    assert(!result.ready);
+    assert(
+        result.error ==
+        AndroidBoundaryError.incomplete_public_ndk);
+}
+
+unittest
+{
+    auto fake = new AndroidBoundaryFake;
+    auto ndk = public_ndk_ops(fake);
+    BinderIdentityBridge missing_identity;
+
+    auto result = build_android_service_adapter(
+        ndk,
+        missing_identity);
+
+    assert(!result.ready);
+    assert(
+        result.error ==
+        AndroidBoundaryError.missing_identity_bridge);
+}
+
+unittest
+{
+    auto fake = new AndroidBoundaryFake;
+    auto adapter = build_android_service_adapter(
+        public_ndk_ops(fake),
+        identity_bridge(fake));
+
+    assert(adapter.ready);
+
+    auto caller = binder_caller(public_ndk_ops(fake));
+    assert(caller.uid == 2_000);
+    assert(caller.pid == 444);
+
+    ClientRegistry clients;
+    BinderCaller remote_caller = BinderCaller(2_000, 444);
+
+    auto result = transact_remote(
+        clients,
+        remote_caller,
+        2_000,
+        50_000,
+        null,
+        parcel_handle(800),
+        parcel_handle(801),
+        5,
+        adapter.service_ops);
+
+    assert(result.ok);
+    assert(result.target_accepted);
+    assert(fake.append_start == 7);
+    assert(fake.append_size == 12);
+    assert(fake.clears == 1);
+    assert(fake.restores == 1);
+    assert(fake.deletes == 1);
+    assert(fake.transacted);
 }
 
 void main()
