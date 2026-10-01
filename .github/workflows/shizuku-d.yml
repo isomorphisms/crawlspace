@@ -26,6 +26,7 @@ jobs:
             src/crawlspace/shizuku/types.d \
             src/crawlspace/shizuku/android_boundary.d \
             src/crawlspace/shizuku/applications.d \
+            src/crawlspace/shizuku/binder_sender.d \
             src/crawlspace/shizuku/clients.d \
             src/crawlspace/shizuku/service.d \
             src/crawlspace/shizuku/delivery.d \
