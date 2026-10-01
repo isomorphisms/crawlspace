@@ -24,6 +24,7 @@ jobs:
           dmd -Isrc -unittest \
             tests/shizuku_d_logic.d \
             src/crawlspace/shizuku/types.d \
+            src/crawlspace/shizuku/android_boundary.d \
             src/crawlspace/shizuku/applications.d \
             src/crawlspace/shizuku/clients.d \
             src/crawlspace/shizuku/service.d \
