@@ -3,6 +3,7 @@ module shizuku_d_logic_test;
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.service;
+import crawlspace.shizuku.startup;
 import crawlspace.shizuku.types;
 import crawlspace.shizuku.user_service;
 
@@ -719,6 +720,230 @@ unittest
 
     assert(registry.length == 0);
     assert(fake.destroys == 1);
+}
+
+private bool contains_string(string[] values, string expected)
+{
+    foreach (value; values)
+    {
+        if (value == expected)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+private class StartupFake
+{
+    AndroidUid uid = 2_000;
+    int api_level = 34;
+    int cgroups;
+    int mount_switches;
+    int selinux_checks;
+    int kills;
+    int finds;
+    int launches;
+    bool allow_call = true;
+    bool allow_transfer = true;
+    bool kill_ok = true;
+    bool readable = true;
+    string context = "";
+    string manager_apk = "/data/app/manager/base.apk";
+    string abi = "arm";
+    AndroidPid launch_pid = 777;
+    ProcessLaunch last_launch;
+
+    AndroidUid current_uid()
+    {
+        return uid;
+    }
+
+    int android_api_level()
+    {
+        return api_level;
+    }
+
+    bool switch_cgroup_best_effort()
+    {
+        ++cgroups;
+        return true;
+    }
+
+    bool switch_mount_namespace_to_init()
+    {
+        ++mount_switches;
+        return true;
+    }
+
+    string current_selinux_context()
+    {
+        return context;
+    }
+
+    bool selinux_allows_binder(
+        string source,
+        string target,
+        SelinuxBinderAccess access)
+    {
+        assert(source == "u:r:untrusted_app:s0");
+        assert(target == context);
+        ++selinux_checks;
+        return access == SelinuxBinderAccess.call
+            ? allow_call
+            : allow_transfer;
+    }
+
+    bool kill_old_server(string process_name)
+    {
+        assert(process_name == "shizuku_server");
+        ++kills;
+        return kill_ok;
+    }
+
+    string find_manager_apk(string package_name)
+    {
+        assert(package_name == "moe.shizuku.privileged.api");
+        ++finds;
+        return manager_apk;
+    }
+
+    bool path_readable(string)
+    {
+        return readable;
+    }
+
+    string device_abi()
+    {
+        return abi;
+    }
+
+    AndroidPid launch_detached(ProcessLaunch launch)
+    {
+        ++launches;
+        last_launch = launch;
+        return launch_pid;
+    }
+}
+
+private StartupOps startup_ops(StartupFake fake)
+{
+    StartupOps ops;
+    ops.current_uid = &fake.current_uid;
+    ops.android_api_level = &fake.android_api_level;
+    ops.switch_cgroup_best_effort = &fake.switch_cgroup_best_effort;
+    ops.switch_mount_namespace_to_init =
+        &fake.switch_mount_namespace_to_init;
+    ops.current_selinux_context = &fake.current_selinux_context;
+    ops.selinux_allows_binder = &fake.selinux_allows_binder;
+    ops.kill_old_server = &fake.kill_old_server;
+    ops.find_manager_apk = &fake.find_manager_apk;
+    ops.path_readable = &fake.path_readable;
+    ops.device_abi = &fake.device_abi;
+    ops.launch_detached = &fake.launch_detached;
+    return ops;
+}
+
+unittest
+{
+    auto fake = new StartupFake;
+    auto result = start_broker("", false, startup_ops(fake));
+
+    assert(result.ok);
+    assert(result.authority == LaunchAuthority.adb_shell);
+    assert(fake.cgroups == 0);
+    assert(fake.mount_switches == 0);
+    assert(fake.selinux_checks == 0);
+    assert(fake.kills == 1);
+    assert(fake.finds == 1);
+    assert(fake.launches == 1);
+    assert(
+        fake.last_launch.executable ==
+        "/system/bin/app_process");
+    assert(
+        fake.last_launch.library_path ==
+        "/data/app/manager/lib/arm");
+    assert(
+        fake.last_launch.main_class ==
+        "rikka.shizuku.server.ShizukuService");
+}
+
+unittest
+{
+    auto fake = new StartupFake;
+    fake.uid = 0;
+    fake.context = "u:r:su:s0";
+    fake.allow_transfer = false;
+
+    auto result = start_broker("", false, startup_ops(fake));
+
+    assert(!result.ok);
+    assert(
+        result.error ==
+        StartupError.binder_blocked_by_selinux);
+    assert(fake.cgroups == 1);
+    assert(fake.mount_switches == 1);
+    assert(fake.selinux_checks == 2);
+    assert(fake.kills == 0);
+    assert(fake.launches == 0);
+}
+
+unittest
+{
+    auto fake = new StartupFake;
+    fake.readable = false;
+
+    auto result = start_broker(
+        "/explicit/unreadable.apk",
+        false,
+        startup_ops(fake));
+
+    assert(!result.ok);
+    assert(result.error == StartupError.manager_apk_unreadable);
+    assert(fake.finds == 0);
+    assert(fake.launches == 0);
+}
+
+unittest
+{
+    StartRequest request;
+    request.identity = UserServiceIdentity(9, "service-token");
+    request.package_name = "example.client";
+    request.class_name = "example.Service";
+    request.process_name_suffix = "worker";
+    request.calling_uid = 112_345;
+    request.use_32_bit_app_process = true;
+    request.debuggable = true;
+
+    auto launch = build_user_service_launch(
+        request,
+        "/data/app/manager/base.apk",
+        true,
+        34);
+
+    assert(launch.executable == "/system/bin/app_process32");
+    assert(launch.process_name == "example.client:worker");
+    assert(
+        launch.main_class ==
+        "moe.shizuku.starter.ServiceStarter");
+    assert(contains_string(
+        launch.arguments,
+        "--token=service-token"));
+    assert(contains_string(
+        launch.arguments,
+        "--package=example.client"));
+    assert(contains_string(
+        launch.arguments,
+        "--class=example.Service"));
+    assert(contains_string(
+        launch.arguments,
+        "--uid=112345"));
+    assert(contains_string(
+        launch.arguments,
+        "--debug-name=example.client:worker"));
+    assert(contains_string(
+        launch.vm_arguments,
+        "-XjdwpProvider:adbconnection"));
 }
 
 void main()
