@@ -7,6 +7,7 @@ import crawlspace.shizuku.rish;
 import crawlspace.shizuku.rish_client;
 import crawlspace.shizuku.service;
 import crawlspace.shizuku.startup;
+import crawlspace.shizuku.transaction_router;
 import crawlspace.shizuku.types;
 import crawlspace.shizuku.user_service;
 
@@ -1562,6 +1563,49 @@ unittest
             26,
             "some other failure") ==
         BinderRequestPath.fail);
+}
+
+unittest
+{
+    assert(
+        classify_shizuku_transaction(10_001) ==
+        ShizukuTransactionRoute.get_applications);
+    assert(
+        classify_shizuku_transaction(1) ==
+        ShizukuTransactionRoute.remote_transact);
+    assert(
+        classify_shizuku_transaction(14) ==
+        ShizukuTransactionRoute.legacy_attach_application);
+    assert(
+        classify_shizuku_transaction(30_000) ==
+        ShizukuTransactionRoute.rish_create_host);
+    assert(
+        classify_shizuku_transaction(30_001) ==
+        ShizukuTransactionRoute.rish_set_window_size);
+    assert(
+        classify_shizuku_transaction(30_002) ==
+        ShizukuTransactionRoute.rish_get_exit_code);
+
+    // Modern generated-AIDL attachApplication remains on the AIDL path.
+    assert(
+        classify_shizuku_transaction(18) ==
+        ShizukuTransactionRoute.generated_aidl_or_unknown);
+}
+
+unittest
+{
+    assert(
+        attached_api_version_for_wire(
+            ShizukuTransactionRoute.legacy_attach_application,
+            13) == -1);
+
+    assert(
+        attached_api_version_for_wire(
+            ShizukuTransactionRoute.generated_aidl_or_unknown,
+            13) == 13);
+
+    assert(server_version_for_attached_client(-1, 13) == 12);
+    assert(server_version_for_attached_client(13, 13) == 13);
 }
 
 void main()
