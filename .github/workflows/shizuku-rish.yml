@@ -1,0 +1,38 @@
+name: shizuku-rish
+
+on:
+  push:
+    branches:
+      - shizuku-provisioning
+  pull_request:
+    branches:
+      - shizuku
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"             "platforms;android-36"             "build-tools;36.0.0"
+      - name: Build controlled Shizuku rish bundle
+        shell: sh
+        run: sh scripts/package_shizuku_rish.sh
+      - name: Test device provisioner
+        shell: sh
+        run: sh tests/shizuku_rish.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crawlspace-shizuku-rish
+          path: out/shizuku-rish/
+          if-no-files-found: error
