@@ -32,6 +32,7 @@ jobs:
             src/crawlspace/shizuku/service.d \
             src/crawlspace/shizuku/server_lifecycle.d \
             src/crawlspace/shizuku/delivery.d \
+            src/crawlspace/shizuku/framework_forwarding.d \
             src/crawlspace/shizuku/permission.d \
             src/crawlspace/shizuku/permission_request.d \
             src/crawlspace/shizuku/rish.d \
