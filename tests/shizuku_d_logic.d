@@ -11,6 +11,7 @@ import crawlspace.shizuku.permission_request;
 import crawlspace.shizuku.rish;
 import crawlspace.shizuku.rish_client;
 import crawlspace.shizuku.service;
+import crawlspace.shizuku.server_lifecycle;
 import crawlspace.shizuku.startup;
 import crawlspace.shizuku.transaction_router;
 import crawlspace.shizuku.types;
@@ -2368,6 +2369,91 @@ unittest
         work.action ==
         ConfirmationAction.start_manager_activity);
     assert(work.activity_user_id == 0);
+}
+
+unittest
+{
+    auto services = required_system_services();
+    assert(services.length == 4);
+    assert(
+        required_system_service_name(services[0]) ==
+        "package");
+    assert(
+        required_system_service_name(services[1]) ==
+        "activity");
+    assert(
+        required_system_service_name(services[2]) ==
+        "user");
+    assert(
+        required_system_service_name(services[3]) ==
+        "appops");
+
+    auto wait = wait_step(services[0]);
+    assert(
+        wait.action ==
+        ServerInitAction.wait_for_system_service);
+    assert(wait.retry_delay_ms == 1_000);
+}
+
+unittest
+{
+    ManagerApplication missing;
+    auto missing_step = manager_application_step(missing);
+    assert(
+        missing_step.action ==
+        ServerInitAction.exit_manager_missing);
+    assert(missing_step.exit_code == 50);
+
+    ManagerApplication present;
+    present.present = true;
+    present.uid = 10_000;
+    auto present_step = manager_application_step(present);
+    assert(
+        present_step.action ==
+        ServerInitAction.initialize_managers);
+}
+
+unittest
+{
+    ServerLifecycleState state;
+    auto order = post_manager_initialization_order();
+
+    assert(order.length == 5);
+    assert(
+        order[0] ==
+        ServerInitAction.initialize_managers);
+    assert(
+        order[1] ==
+        ServerInitAction.register_manager_apk_observer);
+    assert(
+        order[2] ==
+        ServerInitAction.register_binder_sender);
+    assert(
+        order[3] ==
+        ServerInitAction.post_initial_binder_delivery);
+    assert(order[4] == ServerInitAction.ready);
+
+    foreach (action; order)
+    {
+        apply_init_action(state, action);
+    }
+
+    assert(state.ready);
+}
+
+unittest
+{
+    assert(
+        manager_apk_changed(true) ==
+        ManagerApkChangeAction.keep_running);
+    assert(
+        manager_apk_changed(false) ==
+        ManagerApkChangeAction.exit_manager_missing);
+
+    auto delivery = initial_binder_delivery_order();
+    assert(delivery.length == 2);
+    assert(delivery[0] == InitialBinderDelivery.clients);
+    assert(delivery[1] == InitialBinderDelivery.manager);
 }
 
 void main()
