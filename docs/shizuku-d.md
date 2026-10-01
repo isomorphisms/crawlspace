@@ -65,6 +65,29 @@ the target transaction can therefore skip restoration. Crawl Space treats
 identity restoration as part of the capability boundary and makes it
 cleanup-safe.
 
+### `user_service.d`
+
+Translation of the reusable `UserServiceManager` / `UserServiceRecord`
+state machine:
+
+- package ownership is checked against the caller app-id and Android user;
+- service identity is package plus tag, or package plus class when no tag is
+  supplied;
+- `noCreate` preserves the API-version-specific return convention;
+- a version mismatch replaces the existing record;
+- a dead non-starting Binder replaces the existing record;
+- a live or still-starting record is reused;
+- daemon mode can change on a reused record;
+- starting is recorded before the external process-start operation is queued;
+- attachment is by the generated service token;
+- Binder death removes that exact service record;
+- non-daemon records are removed when the final connection disappears;
+- destruction unlinks Binder death and sends the destroy operation only to a
+  still-live Binder.
+
+Process construction, the 30-second Android handler timeout, and the concrete
+Binder destroy transaction remain Android-boundary operations.
+
 ## Android boundary
 
 These files contain Shizuku logic, not another private Binder implementation.
@@ -78,7 +101,7 @@ The next translation slices in Crawl Space are:
 
 - Binder-delivery / ContentProvider retry policy;
 - permission-result/config propagation;
-- user-service records and version compatibility;
+- permission-result/config propagation;
 - process startup and server lifecycle;
 - the rish service-facing logic.
 
