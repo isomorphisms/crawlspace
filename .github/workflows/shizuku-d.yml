@@ -36,6 +36,7 @@ jobs:
             src/crawlspace/shizuku/permission_request.d \
             src/crawlspace/shizuku/rish.d \
             src/crawlspace/shizuku/rish_client.d \
+            src/crawlspace/shizuku/remote_process.d \
             src/crawlspace/shizuku/user_service.d \
             src/crawlspace/shizuku/user_service_apk.d \
             src/crawlspace/shizuku/startup.d \
