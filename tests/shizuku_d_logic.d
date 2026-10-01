@@ -2,6 +2,7 @@ module shizuku_d_logic_test;
 
 import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
+import crawlspace.shizuku.permission;
 import crawlspace.shizuku.service;
 import crawlspace.shizuku.startup;
 import crawlspace.shizuku.types;
@@ -944,6 +945,289 @@ unittest
     assert(contains_string(
         launch.vm_arguments,
         "-XjdwpProvider:adbconnection"));
+}
+
+private class PermissionFake
+{
+    bool runtime_granted;
+    int grants;
+    int revokes;
+    int force_stops;
+    int service_removals;
+    int dispatches;
+    int last_request_code;
+    bool last_allowed;
+
+    string[] packages_for_uid(AndroidUid)
+    {
+        return ["example.one", "example.two"];
+    }
+
+    bool package_requests_permission(string package_name, int user_id)
+    {
+        assert(user_id == 1);
+        return package_name == "example.one" ||
+            package_name == "example.two";
+    }
+
+    bool runtime_permission_granted(AndroidUid)
+    {
+        return runtime_granted;
+    }
+
+    void grant_runtime_permission(string, int)
+    {
+        ++grants;
+    }
+
+    void revoke_runtime_permission(string, int)
+    {
+        ++revokes;
+    }
+
+    void force_stop_package(string, int)
+    {
+        ++force_stops;
+    }
+
+    void remove_user_services_for_package(string)
+    {
+        ++service_removals;
+    }
+
+    void dispatch_permission_result(
+        BinderHandle,
+        int request_code,
+        bool allowed)
+    {
+        ++dispatches;
+        last_request_code = request_code;
+        last_allowed = allowed;
+    }
+}
+
+private PermissionOps permission_ops(PermissionFake fake)
+{
+    PermissionOps ops;
+    ops.packages_for_uid = &fake.packages_for_uid;
+    ops.package_requests_permission =
+        &fake.package_requests_permission;
+    ops.runtime_permission_granted =
+        &fake.runtime_permission_granted;
+    ops.grant_runtime_permission =
+        &fake.grant_runtime_permission;
+    ops.revoke_runtime_permission =
+        &fake.revoke_runtime_permission;
+    ops.force_stop_package = &fake.force_stop_package;
+    ops.remove_user_services_for_package =
+        &fake.remove_user_services_for_package;
+    ops.dispatch_permission_result =
+        &fake.dispatch_permission_result;
+    return ops;
+}
+
+private void add_permission_client(
+    ref ClientRegistry clients,
+    AndroidUid uid,
+    AndroidPid pid,
+    string package_name,
+    bool initially_allowed)
+{
+    bool owns(AndroidUid, string)
+    {
+        return true;
+    }
+
+    bool initial(AndroidUid)
+    {
+        return initially_allowed;
+    }
+
+    bool link(BinderHandle, ClientToken)
+    {
+        return true;
+    }
+
+    auto result = attach_application(
+        clients,
+        BinderCaller(uid, pid),
+        package_name,
+        binder_handle(cast(size_t) pid),
+        13,
+        &owns,
+        &initial,
+        &link);
+
+    assert(result.ok);
+}
+
+unittest
+{
+    ConfigStore config;
+
+    assert(config.update(
+        112_345,
+        ["example.one"],
+        mask_permission,
+        flag_allowed));
+
+    // Exact upstream behavior: unchanged flags return before package merge.
+    assert(!config.update(
+        112_345,
+        ["example.two"],
+        mask_permission,
+        flag_allowed));
+
+    auto entry = config.find(112_345);
+    assert(entry !is null);
+    assert(entry.packages.length == 1);
+    assert(entry.packages[0] == "example.one");
+}
+
+unittest
+{
+    ClientRegistry clients;
+    ConfigStore config;
+    auto fake = new PermissionFake;
+    auto ops = permission_ops(fake);
+
+    add_permission_client(
+        clients,
+        112_345,
+        11,
+        "example.one",
+        false);
+    add_permission_client(
+        clients,
+        112_345,
+        12,
+        "example.two",
+        false);
+
+    auto changed = dispatch_permission_confirmation_result(
+        clients,
+        config,
+        112_345,
+        12,
+        55,
+        true,
+        false,
+        ops);
+
+    assert(changed);
+    assert(fake.dispatches == 1);
+    assert(fake.last_request_code == 55);
+    assert(fake.last_allowed);
+    assert(fake.grants == 2);
+    assert(fake.revokes == 0);
+
+    foreach (record; clients.find_clients(112_345))
+    {
+        assert(record.allowed);
+    }
+
+    auto entry = config.find(112_345);
+    assert(entry !is null);
+    assert(entry.allowed);
+    assert(entry.packages.length == 2);
+}
+
+unittest
+{
+    ClientRegistry clients;
+    ConfigStore config;
+    auto fake = new PermissionFake;
+    auto ops = permission_ops(fake);
+
+    add_permission_client(
+        clients,
+        112_345,
+        21,
+        "example.one",
+        false);
+
+    auto changed = dispatch_permission_confirmation_result(
+        clients,
+        config,
+        112_345,
+        21,
+        7,
+        true,
+        true,
+        ops);
+
+    assert(!changed);
+    assert(config.length == 0);
+    assert(fake.grants == 0);
+    assert(fake.dispatches == 1);
+    assert(clients.find_clients(112_345)[0].allowed);
+}
+
+unittest
+{
+    ClientRegistry clients;
+    ConfigStore config;
+    auto fake = new PermissionFake;
+    auto ops = permission_ops(fake);
+
+    add_permission_client(
+        clients,
+        112_345,
+        31,
+        "example.one",
+        true);
+    add_permission_client(
+        clients,
+        112_345,
+        32,
+        "example.two",
+        true);
+
+    config.update(
+        112_345,
+        ["example.one", "example.two"],
+        mask_permission,
+        flag_allowed);
+
+    auto changed = update_flags_for_uid(
+        clients,
+        config,
+        112_345,
+        mask_permission,
+        flag_denied,
+        ops);
+
+    assert(changed);
+    assert(fake.force_stops == 2);
+    assert(fake.service_removals == 2);
+    assert(fake.revokes == 2);
+
+    foreach (record; clients.find_clients(112_345))
+    {
+        assert(!record.allowed);
+    }
+
+    auto entry = config.find(112_345);
+    assert(entry !is null);
+    assert(entry.denied);
+    assert(!entry.allowed);
+}
+
+unittest
+{
+    ConfigStore config;
+    auto fake = new PermissionFake;
+    fake.runtime_granted = true;
+    auto ops = permission_ops(fake);
+
+    auto flags = get_flags_for_uid(
+        config,
+        112_345,
+        mask_permission,
+        true,
+        ops);
+
+    assert(flags == flag_allowed);
 }
 
 void main()
