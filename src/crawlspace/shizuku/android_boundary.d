@@ -6,6 +6,25 @@ import crawlspace.shizuku.types;
 alias AndroidCallingUid = AndroidUid delegate();
 alias AndroidCallingPid = AndroidPid delegate();
 
+struct StableNdkCallerOps
+{
+    AndroidCallingUid calling_uid;
+    AndroidCallingPid calling_pid;
+
+    bool complete() const nothrow @nogc
+    {
+        return calling_uid !is null &&
+            calling_pid !is null;
+    }
+}
+
+BinderCaller binder_caller(StableNdkCallerOps ndk)
+{
+    return BinderCaller(
+        ndk.calling_uid(),
+        ndk.calling_pid());
+}
+
 alias AndroidReadStrongBinder =
     bool delegate(ParcelHandle parcel, out BinderHandle binder);
 alias AndroidReadInt32 =
@@ -30,10 +49,24 @@ alias AndroidBinderTransact =
         ParcelHandle reply,
         TransactionFlags flags);
 
-struct PublicNdkBinderOps
+/*
+ * Transparent Shizuku forwarding is deliberately a separate bridge.
+ *
+ * Stable libbinder_ndk exposes many of these individual primitives, but its
+ * AIBinder_transact contract is not transparent: the input must come from
+ * AIBinder_prepareTransaction, and prepareTransaction requires the target to be
+ * associated with an NDK Binder class. Shizuku instead receives an arbitrary
+ * target Binder and copies the caller's remaining opaque Parcel bytes.
+ *
+ * Therefore this bridge must be backed by either:
+ *   - a narrow Java/framework JNI bridge using android.os.Parcel/IBinder; or
+ *   - a platform-libbinder bridge with equivalent opaque transact semantics.
+ *
+ * Do not implement AndroidBinderTransact by directly passing an AParcel_create
+ * parcel to AIBinder_transact.
+ */
+struct TransparentBinderBridge
 {
-    AndroidCallingUid calling_uid;
-    AndroidCallingPid calling_pid;
     AndroidReadStrongBinder read_strong_binder;
     AndroidReadInt32 read_int32;
     AndroidCreateParcel create_parcel;
@@ -43,12 +76,9 @@ struct PublicNdkBinderOps
     AndroidAppendParcel append_parcel;
     AndroidBinderTransact transact;
 
-    bool complete_for_remote_forwarding() const
-        nothrow @nogc
+    bool complete() const nothrow @nogc
     {
-        return calling_uid !is null &&
-            calling_pid !is null &&
-            read_strong_binder !is null &&
+        return read_strong_binder !is null &&
             read_int32 !is null &&
             create_parcel !is null &&
             delete_parcel !is null &&
@@ -60,9 +90,9 @@ struct PublicNdkBinderOps
 }
 
 /*
- * There is intentionally no "NDK fallback" for this pair. Public
- * libbinder_ndk exposes caller UID/PID but not Binder.clearCallingIdentity /
- * restoreCallingIdentity. Exact Shizuku forwarding needs this explicit bridge.
+ * Public libbinder_ndk exposes caller UID/PID but not the Java Binder
+ * clearCallingIdentity / restoreCallingIdentity pair. Exact Shizuku forwarding
+ * needs this capability explicitly.
  */
 struct BinderIdentityBridge
 {
@@ -79,7 +109,7 @@ struct BinderIdentityBridge
 enum AndroidBoundaryError : ubyte
 {
     none,
-    incomplete_public_ndk,
+    incomplete_transparent_bridge,
     missing_identity_bridge
 }
 
@@ -94,23 +124,16 @@ struct AndroidServiceAdapter
     }
 }
 
-BinderCaller binder_caller(PublicNdkBinderOps ndk)
-{
-    return BinderCaller(
-        ndk.calling_uid(),
-        ndk.calling_pid());
-}
-
 AndroidServiceAdapter build_android_service_adapter(
-    PublicNdkBinderOps ndk,
+    TransparentBinderBridge bridge,
     BinderIdentityBridge identity)
 {
     AndroidServiceAdapter result;
 
-    if (!ndk.complete_for_remote_forwarding)
+    if (!bridge.complete)
     {
         result.error =
-            AndroidBoundaryError.incomplete_public_ndk;
+            AndroidBoundaryError.incomplete_transparent_bridge;
         return result;
     }
 
@@ -124,7 +147,7 @@ AndroidServiceAdapter build_android_service_adapter(
     BinderHandle read_binder(ParcelHandle parcel)
     {
         BinderHandle binder;
-        if (!ndk.read_strong_binder(parcel, binder))
+        if (!bridge.read_strong_binder(parcel, binder))
         {
             return BinderHandle.init;
         }
@@ -134,7 +157,7 @@ AndroidServiceAdapter build_android_service_adapter(
     int read_int(ParcelHandle parcel)
     {
         int value;
-        if (!ndk.read_int32(parcel, value))
+        if (!bridge.read_int32(parcel, value))
         {
             return 0;
         }
@@ -143,15 +166,15 @@ AndroidServiceAdapter build_android_service_adapter(
 
     ParcelHandle obtain_parcel()
     {
-        return ndk.create_parcel();
+        return bridge.create_parcel();
     }
 
     bool append_remaining(
         ParcelHandle source,
         ParcelHandle target)
     {
-        auto start = ndk.parcel_position(source);
-        auto end = ndk.parcel_size(source);
+        auto start = bridge.parcel_position(source);
+        auto end = bridge.parcel_size(source);
 
         if (start < 0 ||
             end < start)
@@ -159,7 +182,7 @@ AndroidServiceAdapter build_android_service_adapter(
             return false;
         }
 
-        return ndk.append_parcel(
+        return bridge.append_parcel(
             source,
             target,
             start,
@@ -168,7 +191,7 @@ AndroidServiceAdapter build_android_service_adapter(
 
     void recycle_parcel(ParcelHandle parcel)
     {
-        ndk.delete_parcel(parcel);
+        bridge.delete_parcel(parcel);
     }
 
     bool transact(
@@ -178,7 +201,7 @@ AndroidServiceAdapter build_android_service_adapter(
         ParcelHandle reply,
         TransactionFlags flags)
     {
-        return ndk.transact(
+        return bridge.transact(
             target,
             code,
             data,
