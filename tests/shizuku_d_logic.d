@@ -4,6 +4,7 @@ import crawlspace.shizuku.clients;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.permission;
 import crawlspace.shizuku.rish;
+import crawlspace.shizuku.rish_client;
 import crawlspace.shizuku.service;
 import crawlspace.shizuku.startup;
 import crawlspace.shizuku.types;
@@ -1489,6 +1490,78 @@ unittest
     assert(
         classify_rish_transaction(config, 29_999) ==
         RishDispatchKind.not_rish);
+}
+
+unittest
+{
+    auto too_old = decide_rish_start(11, true, false);
+    assert(too_old.action == RishClientAction.reject_server);
+
+    auto granted = decide_rish_start(12, true, false);
+    assert(granted.action == RishClientAction.run_shell);
+
+    auto rationale = decide_rish_start(12, false, true);
+    assert(rationale.action == RishClientAction.deny_permission);
+
+    auto request = decide_rish_start(12, false, false);
+    assert(request.action == RishClientAction.request_permission);
+
+    assert(
+        permission_result_action(true) ==
+        RishClientAction.run_shell);
+    assert(
+        permission_result_action(false) ==
+        RishClientAction.deny_permission);
+}
+
+unittest
+{
+    auto one = select_shell_package(
+        ["com.termux"],
+        "");
+    assert(one.ok);
+    assert(one.package_name == "com.termux");
+
+    auto shared_missing = select_shell_package(
+        ["one", "two"],
+        "PKG");
+    assert(!shared_missing.ok);
+    assert(
+        shared_missing.error ==
+        ShellPackageError.application_id_required);
+
+    auto shared_selected = select_shell_package(
+        ["one", "two"],
+        "com.termux");
+    assert(shared_selected.ok);
+    assert(shared_selected.package_name == "com.termux");
+}
+
+unittest
+{
+    assert(
+        binder_request_failure_path(
+            26,
+            "Calling application did not provide package name") ==
+        BinderRequestPath.android_8_activity_fallback);
+
+    assert(
+        binder_request_failure_path(
+            27,
+            "Calling application did not provide package name") ==
+        BinderRequestPath.android_8_activity_fallback);
+
+    assert(
+        binder_request_failure_path(
+            28,
+            "Calling application did not provide package name") ==
+        BinderRequestPath.fail);
+
+    assert(
+        binder_request_failure_path(
+            26,
+            "some other failure") ==
+        BinderRequestPath.fail);
 }
 
 void main()
