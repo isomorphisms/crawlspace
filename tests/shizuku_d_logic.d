@@ -4,6 +4,7 @@ import crawlspace.shizuku.android_boundary;
 import crawlspace.shizuku.applications;
 import crawlspace.shizuku.binder_sender;
 import crawlspace.shizuku.clients;
+import crawlspace.shizuku.config_reconcile;
 import crawlspace.shizuku.delivery;
 import crawlspace.shizuku.permission;
 import crawlspace.shizuku.rish;
@@ -2075,6 +2076,142 @@ unittest
         &fake.manager_permission_granted);
 
     assert(result.kind == BinderDeliveryKind.none);
+}
+
+private class ConfigReconcileFake
+{
+    string[] current_packages(AndroidUid uid)
+    {
+        if (uid == 100)
+        {
+            return [];
+        }
+
+        if (uid == 200)
+        {
+            return ["kept.package", "sibling.package"];
+        }
+
+        if (uid == 300)
+        {
+            return ["still.present"];
+        }
+
+        return [];
+    }
+}
+
+unittest
+{
+    ConfigStore config;
+
+    config.update(
+        100,
+        ["gone.package"],
+        mask_permission,
+        flag_allowed);
+
+    config.update(
+        200,
+        ["kept.package"],
+        mask_permission,
+        flag_allowed);
+
+    // Force duplicates directly through the reconciliation helper surface.
+    config.replace_packages(
+        200,
+        ["kept.package", "kept.package"]);
+
+    // Empty package list is removed by upstream startup reconciliation.
+    config.update(
+        300,
+        null,
+        mask_permission,
+        flag_denied);
+
+    auto fake = new ConfigReconcileFake;
+
+    auto result = reconcile_config(
+        config,
+        &fake.current_packages,
+        []);
+
+    assert(result.changed);
+    assert(result.removed_entries == 2);
+    assert(result.deduplicated_entries == 1);
+    assert(config.find(100) is null);
+    assert(config.find(300) is null);
+
+    auto kept = config.find(200);
+    assert(kept !is null);
+    assert(kept.packages.length == 1);
+    assert(kept.packages[0] == "kept.package");
+}
+
+unittest
+{
+    ConfigStore config;
+
+    config.update(
+        400,
+        ["existing.package"],
+        mask_permission,
+        flag_allowed);
+
+    InstalledPermissionState existing;
+    existing.uid = 400;
+    existing.package_name = "second.package";
+    existing.check_succeeded = true;
+    existing.permission_granted = true;
+
+    InstalledPermissionState denied;
+    denied.uid = 500;
+    denied.package_name = "denied.package";
+    denied.check_succeeded = true;
+    denied.permission_granted = false;
+
+    InstalledPermissionState failed;
+    failed.uid = 600;
+    failed.package_name = "unknown.package";
+    failed.check_succeeded = false;
+
+    auto result = reconcile_config(
+        config,
+        null,
+        [existing, denied, failed]);
+
+    assert(result.changed);
+    assert(result.imported_permission_packages == 2);
+
+    auto existing_entry = config.find(400);
+    assert(existing_entry !is null);
+
+    // updateLocked returns before package merge when flags are unchanged.
+    assert(existing_entry.packages.length == 1);
+    assert(existing_entry.packages[0] == "existing.package");
+
+    auto denied_entry = config.find(500);
+    assert(denied_entry !is null);
+    assert(denied_entry.flags == 0);
+
+    assert(config.find(600) is null);
+}
+
+unittest
+{
+    assert(
+        config_write_schedule_action(29, false) ==
+        ConfigWriteScheduleAction.post);
+    assert(
+        config_write_schedule_action(29, true) ==
+        ConfigWriteScheduleAction.keep_existing);
+    assert(
+        config_write_schedule_action(28, false) ==
+        ConfigWriteScheduleAction.post);
+    assert(
+        config_write_schedule_action(28, true) ==
+        ConfigWriteScheduleAction.remove_then_post);
+    assert(shizuku_config_write_delay_ms == 10_000);
 }
 
 void main()
