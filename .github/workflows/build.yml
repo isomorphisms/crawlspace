@@ -7,6 +7,7 @@ on:
       - adb-shell-bridge
       - capability-discovery-v1
       - longview-control-plane
+      - strip-android-runtime
   pull_request:
 
 permissions:
@@ -23,9 +24,11 @@ jobs:
         # Root is the host-test analogue of the accepted Android root/shell IDs.
         run: sudo make test
 
-      - name: Check Longview acceptance harness syntax
+      - name: Check stage scripts
         shell: sh
-        run: sh -n scripts/longview_control_acceptance.sh
+        run: |
+          sh -n scripts/longview_control_acceptance.sh
+          sh -n scripts/stage_android_release.sh
 
   android:
     runs-on: ubuntu-latest
@@ -41,12 +44,10 @@ jobs:
           ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" \
             sh scripts/build_android.sh all
 
-      - name: Stage immutable Android assets
-        run: |
-          mkdir -p dist
-          cp build/armeabi-v7a/crawlspace dist/crawlspace-armeabi-v7a
-          cp build/arm64-v8a/crawlspace dist/crawlspace-arm64-v8a
-          sha256sum dist/crawlspace-armeabi-v7a dist/crawlspace-arm64-v8a > dist/SHA256SUMS
+      - name: Strip and stage immutable Android release assets
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: sh scripts/stage_android_release.sh
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -73,5 +74,6 @@ jobs:
             dist/crawlspace-armeabi-v7a \
             dist/crawlspace-arm64-v8a \
             dist/SHA256SUMS \
+            dist/BUILD-RECEIPT.tsv \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
