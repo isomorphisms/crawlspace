@@ -45,9 +45,9 @@ jobs:
             sh scripts/build_android.sh all
 
       - name: Strip and stage immutable Android release assets
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
-        run: sh scripts/stage_android_release.sh
+        run: |
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" \
+            sh scripts/stage_android_release.sh
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
