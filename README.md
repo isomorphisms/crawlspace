@@ -142,8 +142,10 @@ Longview control check is:
 sh scripts/longview_control_acceptance.sh
 ```
 
-It verifies the listener identity, runs one bounded shell command, and proves
-`crawlspace discover` remains responsive while that command is still active.
+It verifies the listener identity and `run-bounded` capability, exercises a
+real server-enforced timeout and output truncation, proves stdout/stderr remain
+separate, then proves `crawlspace discover` remains responsive while a bounded
+command is still active.
 
 The stronger lifetime test is intentionally explicit because it stops the
 listener:

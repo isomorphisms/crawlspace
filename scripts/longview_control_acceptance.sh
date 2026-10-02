@@ -56,6 +56,10 @@ field() {
     '
 }
 
+discovery=$("$crawlspace" discover)
+printf '%s\n' "$discovery" | grep -Fqx 'capability=crawlspace.run-bounded.v1' || \
+    fail 'runtime does not advertise crawlspace.run-bounded.v1'
+
 identity=$("$crawlspace" identify)
 status=$(field status "$identity") || fail 'identity response lacks status'
 [ "$status" = ready ] || fail "identity status is $status"
@@ -75,13 +79,41 @@ case $daemon_uid in 0|2000) ;; *) fail "unexpected daemon UID: $daemon_uid" ;; e
 
 tmp=${TMPDIR:-"$HOME/.cache"}
 mkdir -p "$tmp"
-first=$tmp/crawlspace-longview-first.$$.out
-second=$tmp/crawlspace-longview-second.$$.out
-absence=$tmp/crawlspace-longview-absence.$$.out
-trap 'rm -f "$first" "$second" "$absence"' EXIT HUP INT TERM
+first_out=$tmp/crawlspace-longview-first.$.out
+first_err=$tmp/crawlspace-longview-first.$.err
+second_out=$tmp/crawlspace-longview-second.$.out
+second_err=$tmp/crawlspace-longview-second.$.err
+absence=$tmp/crawlspace-longview-absence.$.out
+bounded_tmp=$tmp/crawlspace-longview-bounded.$.out
+bounded_err=$tmp/crawlspace-longview-bounded.$.err
+trap 'rm -f "$first_out" "$first_err" "$second_out" "$second_err" "$absence" "$bounded_tmp" "$bounded_err"' EXIT HUP INT TERM
+
+printf '%s\n' 'phase=bounded-semantics'
+set +e
+"$crawlspace" run-bounded 1000 4 64 /system/bin/sh -c \
+    'printf 0123456789; printf stderr-ok >&2' >"$bounded_tmp" 2>"$bounded_err"
+truncate_status=$?
+set -e
+[ "$truncate_status" -eq 75 ] || fail "bounded truncation exit=$truncate_status"
+[ "$(cat "$bounded_tmp")" = 0123 ] || fail 'bounded stdout retained prefix is wrong'
+grep -Fq 'stderr-ok' "$bounded_err" || fail 'bounded stderr was not kept separate'
+grep -Fq 'bounded stdout truncated at 4 bytes' "$bounded_err" || \
+    fail 'bounded stdout truncation diagnostic is missing'
+
+set +e
+"$crawlspace" run-bounded 100 64 64 /system/bin/toybox sleep 2 \
+    >"$bounded_tmp" 2>"$bounded_err"
+timeout_status=$?
+set -e
+[ "$timeout_status" -eq 124 ] || fail "bounded timeout exit=$timeout_status"
+grep -Fq 'bounded command timed out' "$bounded_err" || \
+    fail 'bounded timeout diagnostic is missing'
+printf '%s\n' 'bounded_execution=PASS'
 
 printf '%s\n' 'phase=concurrent-control'
-"$crawlspace" run /system/bin/sh -c     'sleep 3; printf "longview-worker-finished\n"' >"$first" 2>&1 &
+"$crawlspace" run-bounded 5000 4096 4096 /system/bin/sh -c \
+    'sleep 3; printf "longview-worker-finished\n"; printf "longview-worker-stderr\n" >&2' \
+    >"$first_out" 2>"$first_err" &
 first_client=$!
 
 sleep 1
@@ -93,16 +125,21 @@ during=$("$crawlspace" discover "$start_identity") || {
 [ "$(field status "$during")" = ready ] ||     fail 'daemon identity changed during bounded worker'
 
 wait "$first_client" || fail 'bounded worker client failed'
-grep -Fqx 'longview-worker-finished' "$first" ||     fail 'bounded worker result is missing'
+grep -Fqx 'longview-worker-finished' "$first_out" || \
+    fail 'bounded worker stdout result is missing'
+grep -Fqx 'longview-worker-stderr' "$first_err" || \
+    fail 'bounded worker stderr result is missing'
 printf '%s\n' 'concurrent_control=PASS'
 
 if [ "$kill_listener" -eq 1 ]; then
     printf '%s\n' 'phase=listener-death'
-    "$crawlspace" run /system/bin/sh -c         'sleep 3; printf "longview-worker-survived-listener\n"' >"$second" 2>&1 &
+    "$crawlspace" run-bounded 5000 4096 4096 /system/bin/sh -c \
+        'sleep 3; printf "longview-worker-survived-listener\n"; printf "listener-death-stderr\n" >&2' \
+        >"$second_out" 2>"$second_err" &
     second_client=$!
 
     sleep 1
-    "$crawlspace" run /system/bin/toybox kill "$daemon_pid" >/dev/null || {
+    "$crawlspace" run-bounded 2000 1024 1024 /system/bin/toybox kill "$daemon_pid" >/dev/null || {
         kill "$second_client" 2>/dev/null || true
         wait "$second_client" 2>/dev/null || true
         fail 'could not kill reported listener PID'
@@ -122,7 +159,10 @@ if [ "$kill_listener" -eq 1 ]; then
     }
 
     wait "$second_client" || fail 'accepted worker failed after listener death'
-    grep -Fqx 'longview-worker-survived-listener' "$second" ||         fail 'accepted worker result missing after listener death'
+    grep -Fqx 'longview-worker-survived-listener' "$second_out" || \
+        fail 'accepted worker stdout missing after listener death'
+    grep -Fqx 'listener-death-stderr' "$second_err" || \
+        fail 'accepted worker stderr missing after listener death'
     printf '%s\n' 'listener_disappearance=PASS'
     printf '%s\n' 'accepted_worker_after_listener_death=PASS'
     printf '%s\n' 'listener_restart_required=yes'

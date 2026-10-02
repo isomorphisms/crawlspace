@@ -99,3 +99,9 @@ mode checks concurrent control without stopping the daemon. The
 already accepted command can finish while the endpoint is gone. It does not
 claim retained-result semantics; IB still owns the distinction between a live
 command response and independently reopenable durable information.
+
+
+The physical Longview acceptance now exercises the bounded-run primitive before
+the listener-lifetime test: separate stdout/stderr, retained-prefix truncation,
+and server-enforced timeout. These remain live synchronous transport semantics.
+They do not turn the captured prefixes into IB durable results.
