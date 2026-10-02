@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef CRAWLSPACE_BUILD_ID
@@ -24,10 +25,14 @@
 #define MAX_TOKEN_BYTES 256
 #define DAEMON_ID_BYTES 16
 #define DEFAULT_TIMEOUT_MS 5000
+#define MAX_BOUNDED_TIMEOUT_MS 60000
+#define MAX_BOUNDED_OUTPUT_BYTES 1048576
 
 static const unsigned char run_magic[4] = {'C', 'S', 'P', '1'};
 static const unsigned char discovery_magic[4] = {'C', 'S', 'P', '2'};
 static const unsigned char discovery_response_magic[4] = {'C', 'S', 'R', '2'};
+static const unsigned char bounded_run_magic[4] = {'C', 'S', 'P', '3'};
+static const unsigned char bounded_response_magic[4] = {'C', 'S', 'R', '3'};
 
 enum discovery_operation {
     DISCOVER_CAPABILITIES = 1,
@@ -42,10 +47,24 @@ enum discovery_status {
     DISCOVERY_OPERATION_DENIED = 4
 };
 
+enum bounded_status {
+    BOUNDED_COMPLETED = 0,
+    BOUNDED_DENIED = 1,
+    BOUNDED_MALFORMED = 2,
+    BOUNDED_INTERNAL_ERROR = 3
+};
+
+enum bounded_flags {
+    BOUNDED_TIMED_OUT = 1,
+    BOUNDED_STDOUT_TRUNCATED = 2,
+    BOUNDED_STDERR_TRUNCATED = 4
+};
+
 static const char *const capabilities[] = {
     "crawlspace.discovery.v1",
     "crawlspace.run.absolute-path.v1",
-    "crawlspace.runtime-identity.v1"
+    "crawlspace.runtime-identity.v1",
+    "crawlspace.run-bounded.v1"
 };
 
 static void die(const char *message) {
@@ -423,6 +442,342 @@ static void run_request(int connection,
     free_arguments(arguments, argument_count);
 }
 
+
+static uint64_t monotonic_milliseconds(void) {
+    struct timespec value;
+    if (clock_gettime(CLOCK_MONOTONIC, &value) < 0) {
+        return 0;
+    }
+    return (uint64_t)value.tv_sec * 1000u +
+           (uint64_t)value.tv_nsec / 1000000u;
+}
+
+static int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int write_bounded_status(int connection,
+                                enum bounded_status status) {
+    return write_all(connection, bounded_response_magic,
+                     sizeof(bounded_response_magic)) < 0 ||
+           write_u32(connection, (uint32_t)status) < 0
+        ? -1 : 0;
+}
+
+static int write_bounded_response(int connection,
+                                  uint32_t flags,
+                                  uint32_t exit_status,
+                                  const unsigned char *stdout_bytes,
+                                  uint32_t stdout_count,
+                                  const unsigned char *stderr_bytes,
+                                  uint32_t stderr_count) {
+    if (write_bounded_status(connection, BOUNDED_COMPLETED) < 0 ||
+        write_u32(connection, 1) < 0 ||
+        write_u32(connection, flags) < 0 ||
+        write_u32(connection, exit_status) < 0 ||
+        write_counted_bytes(connection, stdout_bytes, stdout_count) < 0 ||
+        write_counted_bytes(connection, stderr_bytes, stderr_count) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int read_bounded_arguments(int connection,
+                                  uint32_t argument_count,
+                                  char ***arguments_out) {
+    char **arguments =
+        calloc((size_t)argument_count + 1, sizeof(*arguments));
+    if (arguments == NULL) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < argument_count; i++) {
+        uint32_t bytes;
+        if (read_u32(connection, &bytes) != 1 ||
+            bytes == 0 || bytes > MAX_ARG_BYTES) {
+            free_arguments(arguments, argument_count);
+            return 0;
+        }
+        arguments[i] = malloc((size_t)bytes + 1);
+        if (arguments[i] == NULL ||
+            read_all(connection, arguments[i], bytes) != 1) {
+            free_arguments(arguments, argument_count);
+            return 0;
+        }
+        arguments[i][bytes] = '\0';
+    }
+
+    *arguments_out = arguments;
+    return 1;
+}
+
+static void bounded_run_request(int connection,
+                                const unsigned char *server_token,
+                                size_t server_token_bytes) {
+    uint32_t token_bytes;
+    unsigned char received_token[MAX_TOKEN_BYTES];
+    if (!read_token(connection, received_token, &token_bytes)) {
+        write_bounded_status(connection, BOUNDED_MALFORMED);
+        return;
+    }
+    if (!token_matches(received_token, token_bytes,
+                       server_token, server_token_bytes)) {
+        write_bounded_status(connection, BOUNDED_DENIED);
+        return;
+    }
+
+    uint32_t timeout_ms;
+    uint32_t stdout_limit;
+    uint32_t stderr_limit;
+    uint32_t argument_count;
+    if (read_u32(connection, &timeout_ms) != 1 ||
+        read_u32(connection, &stdout_limit) != 1 ||
+        read_u32(connection, &stderr_limit) != 1 ||
+        read_u32(connection, &argument_count) != 1 ||
+        timeout_ms == 0 || timeout_ms > MAX_BOUNDED_TIMEOUT_MS ||
+        stdout_limit > MAX_BOUNDED_OUTPUT_BYTES ||
+        stderr_limit > MAX_BOUNDED_OUTPUT_BYTES ||
+        argument_count == 0 || argument_count > MAX_ARGS) {
+        write_bounded_status(connection, BOUNDED_MALFORMED);
+        return;
+    }
+
+    char **arguments = NULL;
+    if (!read_bounded_arguments(connection, argument_count, &arguments)) {
+        write_bounded_status(connection, BOUNDED_MALFORMED);
+        return;
+    }
+
+    if (arguments[0][0] != '/') {
+        static const unsigned char message[] =
+            "crawlspace: command must be an absolute path\n";
+        write_bounded_response(connection, 0, 126,
+                               NULL, 0,
+                               message, (uint32_t)(sizeof(message) - 1));
+        free_arguments(arguments, argument_count);
+        return;
+    }
+
+    int stdout_pipe[2];
+    int stderr_pipe[2];
+    if (pipe(stdout_pipe) < 0 || pipe(stderr_pipe) < 0) {
+        if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
+        if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
+        write_bounded_status(connection, BOUNDED_INTERNAL_ERROR);
+        free_arguments(arguments, argument_count);
+        return;
+    }
+
+    pid_t child = fork();
+    if (child < 0) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
+        write_bounded_status(connection, BOUNDED_INTERNAL_ERROR);
+        free_arguments(arguments, argument_count);
+        return;
+    }
+
+    if (child == 0) {
+        close(connection);
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+
+        int null_input = open("/dev/null", O_RDONLY);
+        if (null_input >= 0) {
+            dup2(null_input, STDIN_FILENO);
+            close(null_input);
+        }
+
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
+
+        execv(arguments[0], arguments);
+        dprintf(STDERR_FILENO,
+                "crawlspace: exec %s: %s\n",
+                arguments[0], strerror(errno));
+        _exit(127);
+    }
+
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+
+    if (set_nonblocking(stdout_pipe[0]) < 0 ||
+        set_nonblocking(stderr_pipe[0]) < 0) {
+        kill(child, SIGKILL);
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {
+        }
+        write_bounded_status(connection, BOUNDED_INTERNAL_ERROR);
+        free_arguments(arguments, argument_count);
+        return;
+    }
+
+    unsigned char *stdout_buffer = malloc(stdout_limit == 0 ? 1 : stdout_limit);
+    unsigned char *stderr_buffer = malloc(stderr_limit == 0 ? 1 : stderr_limit);
+    if (stdout_buffer == NULL || stderr_buffer == NULL) {
+        kill(child, SIGKILL);
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {
+        }
+        free(stdout_buffer);
+        free(stderr_buffer);
+        write_bounded_status(connection, BOUNDED_INTERNAL_ERROR);
+        free_arguments(arguments, argument_count);
+        return;
+    }
+
+    uint32_t stdout_used = 0;
+    uint32_t stderr_used = 0;
+    uint32_t flags = 0;
+    int stdout_open = 1;
+    int stderr_open = 1;
+    int child_done = 0;
+    int child_status = 0;
+    uint64_t start_ms = monotonic_milliseconds();
+    uint64_t deadline_ms = start_ms + timeout_ms;
+
+    while (stdout_open || stderr_open || !child_done) {
+        uint64_t now_ms = monotonic_milliseconds();
+        if (!child_done && !(flags & BOUNDED_TIMED_OUT) &&
+            now_ms >= deadline_ms) {
+            kill(child, SIGKILL);
+            flags |= BOUNDED_TIMED_OUT;
+        }
+
+        if (!child_done) {
+            pid_t waited = waitpid(child, &child_status, WNOHANG);
+            if (waited == child) {
+                child_done = 1;
+            } else if (waited < 0 && errno != EINTR) {
+                child_done = 1;
+                child_status = 0;
+            }
+        }
+
+        if (!stdout_open && !stderr_open) {
+            if (!child_done) {
+                while (waitpid(child, &child_status, 0) < 0 &&
+                       errno == EINTR) {
+                }
+                child_done = 1;
+            }
+            break;
+        }
+
+        struct pollfd fds[2];
+        int which[2];
+        nfds_t count = 0;
+        if (stdout_open) {
+            fds[count].fd = stdout_pipe[0];
+            fds[count].events = POLLIN | POLLHUP | POLLERR;
+            fds[count].revents = 0;
+            which[count++] = 1;
+        }
+        if (stderr_open) {
+            fds[count].fd = stderr_pipe[0];
+            fds[count].events = POLLIN | POLLHUP | POLLERR;
+            fds[count].revents = 0;
+            which[count++] = 2;
+        }
+
+        int poll_timeout = 50;
+        if (!child_done && !(flags & BOUNDED_TIMED_OUT)) {
+            now_ms = monotonic_milliseconds();
+            uint64_t remaining =
+                now_ms >= deadline_ms ? 0 : deadline_ms - now_ms;
+            if (remaining < (uint64_t)poll_timeout) {
+                poll_timeout = (int)remaining;
+            }
+        }
+
+        int ready;
+        do {
+            ready = poll(fds, count, poll_timeout);
+        } while (ready < 0 && errno == EINTR);
+        if (ready < 0) {
+            kill(child, SIGKILL);
+            flags |= BOUNDED_TIMED_OUT;
+            continue;
+        }
+
+        for (nfds_t i = 0; i < count; i++) {
+            if (fds[i].revents == 0) {
+                continue;
+            }
+            int fd = fds[i].fd;
+            for (;;) {
+                unsigned char chunk[4096];
+                ssize_t bytes = read(fd, chunk, sizeof(chunk));
+                if (bytes == 0) {
+                    close(fd);
+                    if (which[i] == 1) stdout_open = 0;
+                    else stderr_open = 0;
+                    break;
+                }
+                if (bytes < 0) {
+                    if (errno == EINTR) continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    close(fd);
+                    if (which[i] == 1) stdout_open = 0;
+                    else stderr_open = 0;
+                    break;
+                }
+
+                uint32_t *used =
+                    which[i] == 1 ? &stdout_used : &stderr_used;
+                uint32_t limit =
+                    which[i] == 1 ? stdout_limit : stderr_limit;
+                unsigned char *buffer =
+                    which[i] == 1 ? stdout_buffer : stderr_buffer;
+                uint32_t room = *used < limit ? limit - *used : 0;
+                uint32_t copy =
+                    (uint32_t)bytes < room ? (uint32_t)bytes : room;
+                if (copy != 0) {
+                    memcpy(buffer + *used, chunk, copy);
+                    *used += copy;
+                }
+                if ((uint32_t)bytes > copy) {
+                    flags |= which[i] == 1
+                        ? BOUNDED_STDOUT_TRUNCATED
+                        : BOUNDED_STDERR_TRUNCATED;
+                }
+            }
+        }
+    }
+
+    if (!child_done) {
+        while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {
+        }
+    }
+
+    uint32_t exit_status = 125;
+    if (flags & BOUNDED_TIMED_OUT) {
+        exit_status = 124;
+    } else if (WIFEXITED(child_status)) {
+        exit_status = (uint32_t)WEXITSTATUS(child_status);
+    } else if (WIFSIGNALED(child_status)) {
+        exit_status = (uint32_t)(128 + WTERMSIG(child_status));
+    }
+
+    write_bounded_response(connection, flags, exit_status,
+                           stdout_buffer, stdout_used,
+                           stderr_buffer, stderr_used);
+
+    free(stdout_buffer);
+    free(stderr_buffer);
+    free_arguments(arguments, argument_count);
+}
+
 static void discovery_request(int connection,
                               const unsigned char *server_token,
                               size_t server_token_bytes,
@@ -527,6 +882,9 @@ static void handle_connection(int connection,
 
     if (memcmp(received_magic, run_magic, sizeof(run_magic)) == 0) {
         run_request(connection, server_token, server_token_bytes);
+    } else if (memcmp(received_magic, bounded_run_magic,
+                      sizeof(bounded_run_magic)) == 0) {
+        bounded_run_request(connection, server_token, server_token_bytes);
     } else if (memcmp(received_magic, discovery_magic,
                       sizeof(discovery_magic)) == 0) {
         discovery_request(connection, server_token, server_token_bytes,
@@ -984,6 +1342,175 @@ static int runtime_identity_client(const char *expected_identity_text) {
     return 0;
 }
 
+
+static int parse_u32_argument(const char *text,
+                              uint32_t minimum,
+                              uint32_t maximum,
+                              const char *label,
+                              uint32_t *value_out) {
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(text, &end, 10);
+    if (errno != 0 || text[0] == '\0' || *end != '\0' ||
+        value < minimum || value > maximum) {
+        fprintf(stderr, "crawlspace: invalid %s: %s\n", label, text);
+        return 0;
+    }
+    *value_out = (uint32_t)value;
+    return 1;
+}
+
+static int bounded_run_client(int argument_count, char **arguments) {
+    if (argument_count < 4) {
+        return 2;
+    }
+
+    uint32_t timeout_ms;
+    uint32_t stdout_limit;
+    uint32_t stderr_limit;
+    if (!parse_u32_argument(arguments[0], 1, MAX_BOUNDED_TIMEOUT_MS,
+                            "bounded timeout", &timeout_ms) ||
+        !parse_u32_argument(arguments[1], 0, MAX_BOUNDED_OUTPUT_BYTES,
+                            "stdout limit", &stdout_limit) ||
+        !parse_u32_argument(arguments[2], 0, MAX_BOUNDED_OUTPUT_BYTES,
+                            "stderr limit", &stderr_limit)) {
+        return 2;
+    }
+
+    int remote_argument_count = argument_count - 3;
+    char **remote_arguments = arguments + 3;
+
+    unsigned char token[MAX_TOKEN_BYTES];
+    size_t token_bytes =
+        load_token(client_token_path(), token, sizeof(token));
+    int connection = open_client_connection(configured_port(),
+                                            parse_timeout_ms(), 0, 0);
+    if (connection < 0) {
+        return -connection;
+    }
+
+    if (write_all(connection, bounded_run_magic,
+                  sizeof(bounded_run_magic)) < 0 ||
+        write_u32(connection, (uint32_t)token_bytes) < 0 ||
+        write_all(connection, token, token_bytes) < 0 ||
+        write_u32(connection, timeout_ms) < 0 ||
+        write_u32(connection, stdout_limit) < 0 ||
+        write_u32(connection, stderr_limit) < 0 ||
+        write_u32(connection, (uint32_t)remote_argument_count) < 0) {
+        close(connection);
+        fprintf(stderr, "crawlspace: failed to write bounded request\n");
+        return 125;
+    }
+
+    for (int i = 0; i < remote_argument_count; i++) {
+        size_t bytes = strlen(remote_arguments[i]);
+        if (bytes == 0 || bytes > MAX_ARG_BYTES ||
+            write_u32(connection, (uint32_t)bytes) < 0 ||
+            write_all(connection, remote_arguments[i], bytes) < 0) {
+            close(connection);
+            fprintf(stderr, "crawlspace: invalid bounded argument\n");
+            return 2;
+        }
+    }
+
+    unsigned char magic[sizeof(bounded_response_magic)];
+    uint32_t status;
+    if (read_all(connection, magic, sizeof(magic)) != 1 ||
+        memcmp(magic, bounded_response_magic, sizeof(magic)) != 0 ||
+        read_u32(connection, &status) != 1) {
+        close(connection);
+        fprintf(stderr, "crawlspace: malformed bounded response\n");
+        return 65;
+    }
+
+    if (status == BOUNDED_DENIED) {
+        close(connection);
+        fprintf(stderr, "crawlspace: bounded request denied\n");
+        return 77;
+    }
+    if (status == BOUNDED_MALFORMED) {
+        close(connection);
+        fprintf(stderr, "crawlspace: bounded request rejected as malformed\n");
+        return 65;
+    }
+    if (status == BOUNDED_INTERNAL_ERROR) {
+        close(connection);
+        fprintf(stderr, "crawlspace: bounded request failed in daemon\n");
+        return 125;
+    }
+    if (status != BOUNDED_COMPLETED) {
+        close(connection);
+        fprintf(stderr, "crawlspace: unknown bounded response status\n");
+        return 65;
+    }
+
+    uint32_t version;
+    uint32_t flags;
+    uint32_t exit_status;
+    uint32_t stdout_bytes;
+    if (read_u32(connection, &version) != 1 || version != 1 ||
+        read_u32(connection, &flags) != 1 ||
+        read_u32(connection, &exit_status) != 1 ||
+        read_u32(connection, &stdout_bytes) != 1 ||
+        stdout_bytes > stdout_limit) {
+        close(connection);
+        fprintf(stderr, "crawlspace: malformed bounded response\n");
+        return 65;
+    }
+
+    unsigned char buffer[4096];
+    uint32_t remaining = stdout_bytes;
+    while (remaining != 0) {
+        size_t chunk = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        if (read_all(connection, buffer, chunk) != 1 ||
+            write_all(STDOUT_FILENO, buffer, chunk) < 0) {
+            close(connection);
+            return 125;
+        }
+        remaining -= (uint32_t)chunk;
+    }
+
+    uint32_t stderr_bytes;
+    if (read_u32(connection, &stderr_bytes) != 1 ||
+        stderr_bytes > stderr_limit) {
+        close(connection);
+        fprintf(stderr, "crawlspace: malformed bounded response\n");
+        return 65;
+    }
+    remaining = stderr_bytes;
+    while (remaining != 0) {
+        size_t chunk = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        if (read_all(connection, buffer, chunk) != 1 ||
+            write_all(STDERR_FILENO, buffer, chunk) < 0) {
+            close(connection);
+            return 125;
+        }
+        remaining -= (uint32_t)chunk;
+    }
+    close(connection);
+
+    if (flags & BOUNDED_TIMED_OUT) {
+        fprintf(stderr, "crawlspace: bounded command timed out\n");
+        return 124;
+    }
+    if (flags & BOUNDED_STDOUT_TRUNCATED) {
+        fprintf(stderr, "crawlspace: bounded stdout truncated at %u bytes\n",
+                stdout_limit);
+    }
+    if (flags & BOUNDED_STDERR_TRUNCATED) {
+        fprintf(stderr, "crawlspace: bounded stderr truncated at %u bytes\n",
+                stderr_limit);
+    }
+    if (flags & (BOUNDED_STDOUT_TRUNCATED | BOUNDED_STDERR_TRUNCATED)) {
+        return 75;
+    }
+
+    if (exit_status > 255) {
+        return 125;
+    }
+    return (int)exit_status;
+}
+
 static int run_client(int argument_count, char **arguments) {
     unsigned char token[MAX_TOKEN_BYTES];
     size_t token_bytes =
@@ -1060,7 +1587,8 @@ static void usage(void) {
             "  crawlspace serve TOKEN_FILE [PORT]\n"
             "  crawlspace discover [EXPECTED_DAEMON_ID]\n"
             "  crawlspace identify [EXPECTED_DAEMON_ID]\n"
-            "  crawlspace run /absolute/command [ARG ...]\n");
+            "  crawlspace run /absolute/command [ARG ...]\n"
+            "  crawlspace run-bounded TIMEOUT_MS STDOUT_BYTES STDERR_BYTES /absolute/command [ARG ...]\n");
 }
 
 int main(int argc, char **argv) {
@@ -1081,6 +1609,10 @@ int main(int argc, char **argv) {
 
     if (argc >= 3 && strcmp(argv[1], "run") == 0) {
         return run_client(argc - 2, argv + 2);
+    }
+
+    if (argc >= 6 && strcmp(argv[1], "run-bounded") == 0) {
+        return bounded_run_client(argc - 2, argv + 2);
     }
 
     if ((argc == 2 || argc == 3) && strcmp(argv[1], "discover") == 0) {

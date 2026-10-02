@@ -56,6 +56,7 @@ Schema version 1 emits only this compiled allowlist:
 - `crawlspace.discovery.v1`
 - `crawlspace.run.absolute-path.v1`
 - `crawlspace.runtime-identity.v1`
+- `crawlspace.run-bounded.v1`
 
 The list describes operations understood by this daemon. It grants no new
 authority. In particular, it makes no claim about Binder, root, SELinux
@@ -153,3 +154,45 @@ The acceptance test proves two Longview-relevant properties:
 
 This is not yet an asynchronous retained-worker protocol. `CSP1` still couples
 one client connection to one command response, and stdout/stderr remain combined.
+
+
+## `CSP3`: bounded synchronous command execution
+
+`CSP3` is a separate primitive from the legacy `CSP1` stream. It does not
+create a durable worker or retained result. It gives a caller one bounded,
+synchronous execution with stdout and stderr kept separate.
+
+Request layout:
+
+1. four bytes `CSP3`;
+2. counted bearer token;
+3. timeout in milliseconds, 1 through 60,000;
+4. stdout retention limit, 0 through 1,048,576 bytes;
+5. stderr retention limit, 0 through 1,048,576 bytes;
+6. argument count;
+7. one counted byte string per argument.
+
+The executable must still be an absolute path. Arguments remain argv data; the
+protocol does not interpolate them into a shell program.
+
+The successful response starts with `CSR3`, status `0`, schema version `1`,
+flags, remote exit status, counted stdout, and counted stderr. Flags are:
+
+- bit 0: execution exceeded its requested timeout and was killed;
+- bit 1: stdout exceeded the retained prefix;
+- bit 2: stderr exceeded the retained prefix.
+
+The daemon continues draining output after a retained prefix fills so a noisy
+child cannot deadlock merely because its output limit was reached. The client
+returns 124 for timeout and 75 when either stream was truncated; otherwise it
+returns the remote exit status.
+
+CLI form:
+
+```sh
+crawlspace run-bounded 5000 65536 65536 /system/bin/id
+```
+
+This operation deliberately does not define IB task identity, retry policy,
+caller-loss policy, committed storage, or late result reopening. Those belong to
+the later Longview worker/result contract.

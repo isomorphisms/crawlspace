@@ -232,6 +232,106 @@ static void wait_for_file(const char *path) {
     fail("worker did not reach its started marker");
 }
 
+
+static int run_client_two_streams(const char *binary,
+                                  const char *token,
+                                  int port,
+                                  const char *const args[],
+                                  size_t arg_count,
+                                  char stdout_output[OUTPUT_BYTES],
+                                  char stderr_output[OUTPUT_BYTES]) {
+    int stdout_pipe[2];
+    int stderr_pipe[2];
+    if (pipe(stdout_pipe) < 0 || pipe(stderr_pipe) < 0) {
+        fail("create two-stream client pipes");
+    }
+
+    pid_t child = fork();
+    if (child < 0) fail("fork two-stream client");
+    if (child == 0) {
+        char port_text[16];
+        snprintf(port_text, sizeof(port_text), "%d", port);
+        setenv("CRAWLSPACE_PORT", port_text, 1);
+        setenv("CRAWLSPACE_TOKEN_FILE", token, 1);
+        setenv("CRAWLSPACE_TIMEOUT_MS", "500", 1);
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
+
+        char **argv = calloc(arg_count + 2, sizeof(*argv));
+        if (argv == NULL) _exit(126);
+        argv[0] = (char *)binary;
+        for (size_t i = 0; i < arg_count; i++) {
+            argv[i + 1] = (char *)args[i];
+        }
+        argv[arg_count + 1] = NULL;
+        execv(binary, argv);
+        _exit(127);
+    }
+
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+
+    size_t out_used = 0;
+    size_t err_used = 0;
+    int out_open = 1;
+    int err_open = 1;
+    while (out_open || err_open) {
+        struct pollfd fds[2];
+        int which[2];
+        nfds_t count = 0;
+        if (out_open) {
+            fds[count].fd = stdout_pipe[0];
+            fds[count].events = POLLIN | POLLHUP;
+            fds[count].revents = 0;
+            which[count++] = 1;
+        }
+        if (err_open) {
+            fds[count].fd = stderr_pipe[0];
+            fds[count].events = POLLIN | POLLHUP;
+            fds[count].revents = 0;
+            which[count++] = 2;
+        }
+        int ready;
+        do {
+            ready = poll(fds, count, 1000);
+        } while (ready < 0 && errno == EINTR);
+        if (ready < 0) fail("poll two-stream client");
+
+        for (nfds_t i = 0; i < count; i++) {
+            if (fds[i].revents == 0) continue;
+            char *buffer = which[i] == 1 ? stdout_output : stderr_output;
+            size_t *used = which[i] == 1 ? &out_used : &err_used;
+            int fd = fds[i].fd;
+            ssize_t got = read(fd, buffer + *used,
+                               OUTPUT_BYTES - *used - 1);
+            if (got == 0) {
+                close(fd);
+                if (which[i] == 1) out_open = 0;
+                else err_open = 0;
+            } else if (got > 0) {
+                *used += (size_t)got;
+                if (*used + 1 >= OUTPUT_BYTES) {
+                    fail("two-stream client output overflow");
+                }
+            } else if (errno != EINTR) {
+                fail("read two-stream client output");
+            }
+        }
+    }
+
+    stdout_output[out_used] = '\0';
+    stderr_output[err_used] = '\0';
+
+    int status;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 255;
+}
+
 static void expect_contains(const char *output, const char *expected) {
     if (strstr(output, expected) == NULL) {
         fprintf(stderr, "missing [%s] in:\n%s\n", expected, output);
@@ -349,7 +449,8 @@ int main(int argc, char **argv) {
     expect_contains(output, "capability=crawlspace.discovery.v1\n");
     expect_contains(output, "capability=crawlspace.run.absolute-path.v1\n");
     expect_contains(output, "capability=crawlspace.runtime-identity.v1\n");
-    if (count_occurrences(output, "capability=") != 3) {
+    expect_contains(output, "capability=crawlspace.run-bounded.v1\n");
+    if (count_occurrences(output, "capability=") != 4) {
         fail("discovery returned a capability outside the allowlist");
     }
     char first_identity[33];
@@ -382,6 +483,72 @@ int main(int argc, char **argv) {
     if (run_client(argv[1], token_path, port, "100", "run", test_binary,
                    output) != 0) {
         fail("CSP1 run inherited discovery I/O timeout");
+    }
+
+
+    char bounded_path[512];
+    snprintf(bounded_path, sizeof(bounded_path),
+             "%s/bounded-fixture.sh", directory);
+    FILE *bounded = fopen(bounded_path, "w");
+    if (bounded == NULL) fail("create bounded fixture");
+    fputs("#!/bin/sh\n"
+          "case \"$1\" in\n"
+          "  streams) printf 'stdout-ok'; printf 'stderr-ok' >&2; exit 7 ;;\n"
+          "  truncate) printf 'abcdefghij'; printf 'ABCDEFGHIJ' >&2 ;;\n"
+          "  timeout) sleep 2; printf 'late' ;;\n"
+          "  *) exit 9 ;;\n"
+          "esac\n", bounded);
+    fclose(bounded);
+    if (chmod(bounded_path, 0700) < 0) fail("chmod bounded fixture");
+
+    char bounded_stdout[OUTPUT_BYTES];
+    char bounded_stderr[OUTPUT_BYTES];
+    const char *stream_args[] = {
+        "run-bounded", "500", "64", "64", bounded_path, "streams"
+    };
+    int bounded_status = run_client_two_streams(
+        argv[1], token_path, port,
+        stream_args, sizeof(stream_args) / sizeof(stream_args[0]),
+        bounded_stdout, bounded_stderr);
+    if (bounded_status != 7) fail("bounded remote exit status");
+    if (strcmp(bounded_stdout, "stdout-ok") != 0) {
+        fail("bounded stdout separation");
+    }
+    if (strcmp(bounded_stderr, "stderr-ok") != 0) {
+        fail("bounded stderr separation");
+    }
+
+    const char *truncate_args[] = {
+        "run-bounded", "500", "4", "5", bounded_path, "truncate"
+    };
+    bounded_status = run_client_two_streams(
+        argv[1], token_path, port,
+        truncate_args, sizeof(truncate_args) / sizeof(truncate_args[0]),
+        bounded_stdout, bounded_stderr);
+    if (bounded_status != 75) fail("bounded truncation exit status");
+    if (strcmp(bounded_stdout, "abcd") != 0) fail("bounded stdout limit");
+    if (strncmp(bounded_stderr, "ABCDE", 5) != 0) {
+        fail("bounded stderr limit");
+    }
+    expect_contains(bounded_stderr, "bounded stdout truncated at 4 bytes");
+    expect_contains(bounded_stderr, "bounded stderr truncated at 5 bytes");
+
+    const char *timeout_args[] = {
+        "run-bounded", "100", "64", "64", bounded_path, "timeout"
+    };
+    bounded_status = run_client_two_streams(
+        argv[1], token_path, port,
+        timeout_args, sizeof(timeout_args) / sizeof(timeout_args[0]),
+        bounded_stdout, bounded_stderr);
+    if (bounded_status != 124) fail("bounded timeout exit status");
+    if (strstr(bounded_stdout, "late") != NULL) {
+        fail("bounded timeout allowed late output");
+    }
+    expect_contains(bounded_stderr, "bounded command timed out");
+
+    if (run_client(argv[1], token_path, port, "500", "discover", NULL,
+                   output) != 0) {
+        fail("daemon did not recover after bounded timeout");
     }
 
     if (run_client(argv[1], wrong_token_path, port, "500", "discover", NULL,
@@ -463,10 +630,12 @@ int main(int argc, char **argv) {
 
     unlink(slow_marker);
     unlink(slow_path);
+    unlink(bounded_path);
     unlink(token_path);
     unlink(wrong_token_path);
     rmdir(directory);
-    puts("PASS: host protocol discovery, runtime identity, concurrent control, "
-         "listener disappearance, restart, absence, timeout, and CSP1 run");
+    puts("PASS: host protocol discovery, runtime identity, bounded separate "
+         "streams/limits/timeout, concurrent control, listener disappearance, "
+         "restart, absence, timeout, and CSP1 run");
     return 0;
 }
