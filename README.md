@@ -119,7 +119,12 @@ cryptographic identity or proof of the daemon executable.
 crawlspace run /system/bin/id
 crawlspace run /system/bin/getprop ro.build.version.release
 crawlspace run /data/local/tmp/tmovvm voicemail list
+crawlspace run-bounded 5000 65536 65536 /system/bin/id
 ```
+
+`run-bounded` adds a server-enforced execution timeout, separate stdout/stderr,
+and retained-output limits while remaining synchronous. It is a mechanism for
+future Longview workers, not itself a durable worker or retained-result API.
 
 Commands must currently use an absolute executable path.
 
