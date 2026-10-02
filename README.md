@@ -37,7 +37,7 @@ or build both ARM targets:
 sh scripts/build_android.sh all
 ```
 
-GitHub Actions also builds `armeabi-v7a` and `arm64-v8a` binaries.
+GitHub Actions also builds `armeabi-v7a` and `arm64-v8a` binaries. Release binaries are stripped with the exact NDK `llvm-strip`; the unstripped build outputs remain only as debugging artifacts. `dist/BUILD-RECEIPT.tsv` records exact source commit, ABI, NDK, pre-strip size, post-strip size, final package size, and SHA-256.
 
 ## First bootstrap
 
